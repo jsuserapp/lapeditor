@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lapeditor</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="toolbar">
+        <div class="toolbar-group">
+          <button type="button" id="btn-new" title="New (Ctrl+N)">New</button>
+          <button type="button" id="btn-open" title="Open (Ctrl+O)">Open</button>
+          <button type="button" id="btn-save" title="Save (Ctrl+S)">Save</button>
+          <button type="button" id="btn-find" title="Find (Ctrl+F)">Find</button>
+        </div>
+        <div class="toolbar-group">
+          <label class="lang-label" for="language-select">Language</label>
+          <select id="language-select"></select>
+        </div>
+        <div class="toolbar-status" id="status">Loading…</div>
+      </header>
+      <div class="tab-bar" id="tab-bar"></div>
+      <main id="editor-host"></main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

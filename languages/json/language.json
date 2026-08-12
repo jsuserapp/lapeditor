@@ -1,0 +1,7 @@
+{
+  "id": "json",
+  "aliases": ["JSON"],
+  "extensions": [".json", ".jsonc"],
+  "scopeName": "source.json",
+  "grammar": "grammar.tmLanguage.json"
+}

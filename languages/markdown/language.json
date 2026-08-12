@@ -1,0 +1,7 @@
+{
+  "id": "markdown",
+  "aliases": ["Markdown", "md"],
+  "extensions": [".md", ".markdown", ".mdown"],
+  "scopeName": "text.html.markdown",
+  "grammar": "grammar.tmLanguage.json"
+}

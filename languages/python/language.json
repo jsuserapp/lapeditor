@@ -1,0 +1,7 @@
+{
+  "id": "python",
+  "aliases": ["Python", "py"],
+  "extensions": [".py", ".pyw", ".pyi"],
+  "scopeName": "source.python",
+  "grammar": "grammar.tmLanguage.json"
+}

@@ -1,0 +1,7 @@
+{
+  "id": "javascript",
+  "aliases": ["JavaScript", "js"],
+  "extensions": [".js", ".mjs", ".cjs", ".jsx"],
+  "scopeName": "source.js",
+  "grammar": "grammar.tmLanguage.json"
+}

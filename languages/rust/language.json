@@ -1,0 +1,7 @@
+{
+  "id": "rust",
+  "aliases": ["Rust"],
+  "extensions": [".rs"],
+  "scopeName": "source.rust",
+  "grammar": "grammar.tmLanguage.json"
+}
