@@ -1,7 +1,7 @@
+use crate::paths;
 use serde::Serialize;
 use std::fs;
-use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,27 +25,8 @@ struct LanguageManifest {
     grammar: String,
 }
 
-pub fn languages_dir(app: &AppHandle) -> PathBuf {
-    if let Ok(dir) = std::env::var("LAPEDITOR_LANGUAGES_DIR") {
-        return PathBuf::from(dir);
-    }
-
-    #[cfg(debug_assertions)]
-    {
-        let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("../languages");
-        if dev.is_dir() {
-            return dev;
-        }
-    }
-
-    app.path()
-        .resource_dir()
-        .map(|dir| dir.join("languages"))
-        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../languages"))
-}
-
 pub fn load_language_plugins(app: &AppHandle) -> Result<Vec<LanguagePlugin>, String> {
-    let root = languages_dir(app);
+    let root = paths::languages_dir(app);
     if !root.is_dir() {
         return Ok(Vec::new());
     }
@@ -74,7 +55,6 @@ pub fn load_language_plugins(app: &AppHandle) -> Result<Vec<LanguagePlugin>, Str
         let grammar_json =
             fs::read_to_string(&grammar_path).map_err(|e| format!("read {}: {e}", grammar_path.display()))?;
 
-        // Validate grammar JSON early so the UI can show a clear error.
         let _: serde_json::Value = serde_json::from_str(&grammar_json)
             .map_err(|e| format!("invalid grammar JSON {}: {e}", grammar_path.display()))?;
 

@@ -1,27 +1,41 @@
 # Lapeditor
 
-Lightweight notepad shell: **Tauri 2 + Monaco + TextMate (`vscode-textmate` / `vscode-oniguruma`)**.
-
-Language support is **plugin-based** (folder drop-in), not a heavy built-in pack.
+Lightweight notepad: **Tauri 2 + Monaco + TextMate**. Language support is folder plugins, not a built-in pack.
 
 ## Dev
 
 ```bash
-npm install
-npm run tauri dev
+pnpm install
+pnpm dev
+```
+
+`pnpm dev` starts Tauri with `--no-watch`. Editing Rust files does not auto-rebuild; stop and run `pnpm dev` again.
+
+## Portable layout
+
+Runtime files stay beside the executable (repo root during `pnpm dev`):
+
+```
+Lapeditor.exe
+config/
+  settings.json      # zoom and other prefs
+  window.json        # position / size
+plugin/
+  languages/         # TextMate language plugins
+data/
+  webview/           # WebView2 cache (Windows)
 ```
 
 ## Language plugins
 
-See [`languages/README.md`](languages/README.md).
+See [`plugin/languages/README.md`](plugin/languages/README.md).
 
-Ship a few samples under `languages/` (javascript / python / json / rust / markdown). Add more by copying a folder with `language.json` + `.tmLanguage.json`.
+Samples: javascript / python / json / rust / markdown. Add a folder with `language.json` + grammar and restart.
 
 ## Current scope
 
 - Multi-tab editor
-- Find / Replace via Monaco (`Ctrl+F` / `Ctrl+H`)
+- Find / Replace (`Ctrl+F` / `Ctrl+H`)
 - Open / Save
+- Window zoom (`Ctrl+=` / `Ctrl+-` / `Ctrl+0`)
 - TextMate highlighting from plugins
-
-Not included yet: session restore, HEX viewer.

@@ -3,16 +3,21 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "pnpm@11.8.0",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/tauri.mjs dev",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "katex": "^0.18.4",
+    "marked": "^18.0.9",
+    "marked-katex-extension": "^5.1.10",
+    "mermaid": "^11.16.1",
     "monaco-editor": "^0.56.0",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"

@@ -77,35 +77,6 @@ export async function registerTextMateLanguages(
     },
   });
 
-  monaco.editor.defineTheme("lapeditor-dark", {
-    base: "vs-dark",
-    inherit: true,
-    rules: [
-      { token: "comment", foreground: "6A9955" },
-      { token: "string", foreground: "CE9178" },
-      { token: "constant", foreground: "B5CEA8" },
-      { token: "keyword", foreground: "C586C0" },
-      { token: "storage", foreground: "569CD6" },
-      { token: "entity.name.function", foreground: "DCDCAA" },
-      { token: "entity.name.type", foreground: "4EC9B0" },
-      { token: "entity.name.class", foreground: "4EC9B0" },
-      { token: "entity.name.tag", foreground: "569CD6" },
-      { token: "entity.other.attribute-name", foreground: "9CDCFE" },
-      { token: "variable", foreground: "9CDCFE" },
-      { token: "support", foreground: "4EC9B0" },
-      { token: "punctuation", foreground: "D4D4D4" },
-      { token: "meta.embedded", foreground: "D4D4D4" },
-      { token: "markup.heading", foreground: "569CD6", fontStyle: "bold" },
-      { token: "markup.bold", fontStyle: "bold" },
-      { token: "markup.italic", fontStyle: "italic" },
-    ],
-    colors: {
-      "editor.background": "#1e1e1e",
-      "editor.foreground": "#d4d4d4",
-    },
-  });
-  monaco.editor.setTheme("lapeditor-dark");
-
   for (const plugin of plugins) {
     const languageId = plugin.id;
     const already = monaco.languages.getLanguages().some((l) => l.id === languageId);

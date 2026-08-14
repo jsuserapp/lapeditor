@@ -3,7 +3,7 @@
 Each subdirectory is one language plugin:
 
 ```
-languages/
+plugin/languages/
   <id>/
     language.json              # required manifest
     grammar.tmLanguage.json    # TextMate grammar (JSON)

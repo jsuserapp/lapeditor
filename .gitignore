@@ -11,18 +11,27 @@ node_modules
 dist
 dist-ssr
 *.local
+package-lock.json
+
+# Runtime portable dirs (created next to the app)
+/config/
+/data/
 
 # Rust / Tauri
 src-tauri/target
 src-tauri/gen/schemas
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
+# Editors / IDEs
+.vscode/
+.cursor/
+.idea/
+.vs/
+*.code-workspace
+*.iml
+*.ipr
+*.iws
 *.sw?
+
+# OS
+.DS_Store
+Thumbs.db

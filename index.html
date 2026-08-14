@@ -1,28 +1,111 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Lapeditor</title>
+    <link rel="icon" href="./src/assets/icon-32.png" type="image/png" />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
     <div id="app">
       <header class="toolbar">
         <div class="toolbar-group">
-          <button type="button" id="btn-new" title="New (Ctrl+N)">New</button>
-          <button type="button" id="btn-open" title="Open (Ctrl+O)">Open</button>
-          <button type="button" id="btn-save" title="Save (Ctrl+S)">Save</button>
-          <button type="button" id="btn-find" title="Find (Ctrl+F)">Find</button>
+          <button type="button" id="btn-new" class="toolbar-action" data-i18n-title="toolbar.newTitle">
+            <img class="toolbar-btn-icon" alt="" />
+            <span data-i18n="toolbar.new">New</span>
+          </button>
+          <button type="button" id="btn-open" class="toolbar-action" data-i18n-title="toolbar.openTitle">
+            <img class="toolbar-btn-icon" alt="" />
+            <span data-i18n="toolbar.open">Open</span>
+          </button>
+          <button type="button" id="btn-save" class="toolbar-action" data-i18n-title="toolbar.saveTitle">
+            <img class="toolbar-btn-icon" alt="" />
+            <span data-i18n="toolbar.save">Save</span>
+          </button>
+          <button type="button" id="btn-save-as" class="toolbar-action" data-i18n-title="toolbar.saveAsTitle">
+            <img class="toolbar-btn-icon" alt="" />
+            <span data-i18n="toolbar.saveAs">Save As</span>
+          </button>
+          <button type="button" id="btn-find" class="toolbar-action" data-i18n-title="toolbar.findTitle">
+            <img class="toolbar-btn-icon" alt="" />
+            <span data-i18n="toolbar.find">Find</span>
+          </button>
         </div>
+        <div class="toolbar-sep" aria-hidden="true"></div>
         <div class="toolbar-group">
-          <label class="lang-label" for="language-select">Language</label>
-          <select id="language-select"></select>
+          <div class="toolbar-popover">
+            <button type="button" id="btn-syntax" class="toolbar-action" data-i18n-title="toolbar.syntax" aria-haspopup="menu" aria-expanded="false">
+              <img id="syntax-icon" class="toolbar-btn-icon" alt="" />
+              <span id="syntax-label"></span>
+            </button>
+            <div id="syntax-menu" class="popover-menu popover-menu-start" hidden role="menu"></div>
+          </div>
         </div>
-        <div class="toolbar-status" id="status">Loading…</div>
+        <div class="toolbar-sep" aria-hidden="true"></div>
+        <div class="toolbar-group">
+          <button type="button" id="btn-hex" class="toolbar-icon-btn toolbar-text-btn" data-i18n-title="toolbar.hexTitle" aria-pressed="false">HEX</button>
+          <button type="button" id="btn-wrap" class="toolbar-icon-btn" data-i18n-title="toolbar.wrapTitle" aria-pressed="false"></button>
+          <button type="button" id="btn-md" class="toolbar-icon-btn" data-i18n-title="toolbar.mdTitle" aria-pressed="false">
+            <img class="toolbar-btn-icon" alt="" />
+          </button>
+        </div>
+        <div class="toolbar-group toolbar-end">
+          <div class="toolbar-popover">
+            <button type="button" id="btn-locale" class="toolbar-icon-btn" data-i18n-title="locale.title" aria-haspopup="menu" aria-expanded="false">
+              <img class="toolbar-btn-icon" alt="" />
+            </button>
+            <div id="locale-menu" class="popover-menu" hidden role="menu"></div>
+          </div>
+          <button type="button" id="btn-theme" class="toolbar-icon-btn" aria-label="Theme"></button>
+        </div>
       </header>
       <div class="tab-bar" id="tab-bar"></div>
-      <main id="editor-host"></main>
+      <main id="editor-host">
+        <div id="monaco-host"></div>
+        <div id="md-gutter" hidden></div>
+        <div id="md-host" hidden></div>
+        <div id="hex-host" hidden></div>
+        <div id="find-widget" class="find-widget" hidden role="dialog" data-i18n-aria="find.title">
+          <button type="button" id="find-toggle-replace" class="find-expand" data-i18n-title="find.toggleReplace" aria-expanded="false"></button>
+          <div class="find-body">
+            <div class="find-inputs">
+              <div class="find-input-wrap">
+                <input id="find-input" type="text" spellcheck="false" autocomplete="off" data-i18n-placeholder="find.placeholder" />
+                <div class="find-input-opts">
+                  <button type="button" id="find-opt-case" class="find-opt" aria-pressed="false" data-i18n-title="find.matchCase">Aa</button>
+                  <button type="button" id="find-opt-word" class="find-opt find-opt-word" aria-pressed="false" data-i18n-title="find.wholeWord">ab</button>
+                  <button type="button" id="find-opt-regex" class="find-opt" aria-pressed="false" data-i18n-title="find.regex">.*</button>
+                </div>
+              </div>
+              <div class="find-input-wrap find-replace-wrap">
+                <input id="replace-input" type="text" spellcheck="false" autocomplete="off" data-i18n-placeholder="find.replacePlaceholder" />
+                <div class="find-input-opts">
+                  <button type="button" id="find-opt-preserve" class="find-opt" aria-pressed="false" data-i18n-title="find.preserveCase">AB</button>
+                </div>
+              </div>
+            </div>
+            <div class="find-actions">
+              <span id="find-matches" class="find-matches"></span>
+              <button type="button" id="find-prev" class="find-icon-btn" data-i18n-title="find.prev"></button>
+              <button type="button" id="find-next" class="find-icon-btn" data-i18n-title="find.next"></button>
+              <button type="button" id="find-in-selection" class="find-icon-btn" aria-pressed="false" data-i18n-title="find.inSelection"></button>
+              <button type="button" id="find-close" class="find-icon-btn" data-i18n-title="find.close"></button>
+              <button type="button" id="find-replace" class="find-icon-btn find-replace-btn" data-i18n-title="find.replace"></button>
+              <button type="button" id="find-replace-all" class="find-icon-btn find-replace-btn" data-i18n-title="find.replaceAll"></button>
+            </div>
+          </div>
+        </div>
+      </main>
+      <footer class="status-bar" id="status-bar">
+        <div class="status-cell" id="status-stats"></div>
+        <div class="status-cell" id="status-cursor"></div>
+        <div class="status-cell status-clickable" id="status-eol" role="button" tabindex="0"></div>
+        <div class="status-popover">
+          <div class="status-cell status-clickable" id="status-encoding" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false"></div>
+          <div id="encoding-menu" class="popover-menu encoding-menu" hidden role="menu"></div>
+        </div>
+      </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
