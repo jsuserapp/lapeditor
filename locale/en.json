@@ -9,6 +9,7 @@
     "toolbar.saveTitle": "Save (Ctrl+S)",
     "toolbar.saveAs": "Save As",
     "toolbar.saveAsTitle": "Save As (Ctrl+Shift+S)",
+    "toolbar.saveMenuTitle": "More save options",
     "toolbar.find": "Find",
     "toolbar.findTitle": "Find (Ctrl+F)",
     "toolbar.syntax": "Language",
@@ -87,6 +88,16 @@
     "find.replaceAll": "Replace All (Ctrl+Alt+Enter)",
     "find.matchIndex": "{current} of {total}",
     "find.noResults": "No results",
-    "find.invalidRegex": "Invalid regular expression"
+    "find.invalidRegex": "Invalid regular expression",
+    "lang.add": "Add language…",
+    "lang.addTitle": "Add language",
+    "lang.addHint": "Enter a language name, id, or extension, for example Go, TypeScript, or .cpp",
+    "lang.typeLabel": "Language",
+    "lang.typePlaceholder": "Go / typescript / .cpp",
+    "lang.addConfirm": "Add",
+    "lang.addPreview": "Will install {name} ({id}, {extensions})",
+    "lang.addDownloading": "Downloading {name} grammar…",
+    "lang.addUnknown": "No matching language. Pick one from the list, or try another name or extension.",
+    "lang.addGrammarMissing": "Could not load this language grammar. Try again, or restart the app and add it once more."
   }
 }

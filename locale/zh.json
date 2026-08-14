@@ -9,6 +9,7 @@
     "toolbar.saveTitle": "保存 (Ctrl+S)",
     "toolbar.saveAs": "另存为",
     "toolbar.saveAsTitle": "另存为 (Ctrl+Shift+S)",
+    "toolbar.saveMenuTitle": "更多保存选项",
     "toolbar.find": "查找",
     "toolbar.findTitle": "查找 (Ctrl+F)",
     "toolbar.syntax": "语言",
@@ -87,6 +88,16 @@
     "find.replaceAll": "全部替换 (Ctrl+Alt+Enter)",
     "find.matchIndex": "第 {current} 项，共 {total} 项",
     "find.noResults": "无结果",
-    "find.invalidRegex": "无效的正则表达式"
+    "find.invalidRegex": "无效的正则表达式",
+    "lang.add": "添加语言…",
+    "lang.addTitle": "添加语言",
+    "lang.addHint": "输入语言名称、标识或扩展名，例如 Go、TypeScript、.cpp",
+    "lang.typeLabel": "语言类型",
+    "lang.typePlaceholder": "Go / typescript / .cpp",
+    "lang.addConfirm": "添加",
+    "lang.addPreview": "将安装 {name}（{id}，{extensions}）",
+    "lang.addDownloading": "正在下载 {name} 语言包…",
+    "lang.addUnknown": "未找到该语言。请从列表中选择，或换一个名称/扩展名试试。",
+    "lang.addGrammarMissing": "无法加载该语言语法。请重试，或重启应用后再添加一次。"
   }
 }

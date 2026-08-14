@@ -1,6 +1,5 @@
 import { marked } from "marked";
 import markedKatex from "marked-katex-extension";
-import mermaid from "mermaid";
 import "katex/dist/katex.min.css";
 import type { ThemeId } from "./theme";
 
@@ -86,6 +85,7 @@ async function renderMermaidBlocks(root: HTMLElement, theme: ThemeId) {
   if (nodes.length === 0) {
     return;
   }
+  const mermaid = (await import("mermaid")).default;
   mermaid.initialize({
     startOnLoad: false,
     theme: mermaidTheme(theme),

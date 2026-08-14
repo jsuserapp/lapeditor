@@ -9,7 +9,12 @@ mod session;
 
 use encoding::TextFile;
 use filewatch::{stat_text_file as stat_text_file_impl, watch_text_files as watch_text_files_impl, FileStat, FileWatchState};
-use languages::{load_language_plugins, LanguagePlugin};
+use languages::{
+    install_language_plugin as install_language_plugin_impl,
+    list_language_catalog as list_language_catalog_impl,
+    list_language_plugin_info, load_language_grammars as load_language_grammars_impl,
+    LanguageCatalogItem, LanguagePlugin, LanguagePluginInfo,
+};
 use locale::{LocaleFile, LocaleInfo};
 use std::path::PathBuf;
 use tauri::Manager;
@@ -22,8 +27,28 @@ fn file_path_to_string(path: tauri_plugin_dialog::FilePath) -> Option<String> {
 }
 
 #[tauri::command]
-fn list_language_plugins(app: tauri::AppHandle) -> Result<Vec<LanguagePlugin>, String> {
-    load_language_plugins(&app)
+fn list_language_plugins(app: tauri::AppHandle) -> Result<Vec<LanguagePluginInfo>, String> {
+    list_language_plugin_info(&app)
+}
+
+#[tauri::command]
+fn load_language_grammars(
+    app: tauri::AppHandle,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    load_language_grammars_impl(&app)
+}
+
+#[tauri::command]
+fn list_language_catalog(app: tauri::AppHandle) -> Result<Vec<LanguageCatalogItem>, String> {
+    list_language_catalog_impl(&app)
+}
+
+#[tauri::command]
+async fn install_language_plugin(
+    app: tauri::AppHandle,
+    language_id: String,
+) -> Result<LanguagePlugin, String> {
+    install_language_plugin_impl(&app, &language_id).await
 }
 
 #[tauri::command]
@@ -128,7 +153,7 @@ fn language_id_for_path(app: tauri::AppHandle, path: String) -> Result<Option<St
         return Ok(None);
     };
 
-    let plugins = load_language_plugins(&app)?;
+    let plugins = list_language_plugin_info(&app)?;
     Ok(plugins
         .into_iter()
         .find(|p| {
@@ -213,6 +238,9 @@ pub fn run() {
         .manage(FileWatchState::new())
         .invoke_handler(tauri::generate_handler![
             list_language_plugins,
+            load_language_grammars,
+            list_language_catalog,
+            install_language_plugin,
             read_text_file,
             write_text_file,
             reinterpret_text,

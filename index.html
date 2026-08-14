@@ -12,31 +12,38 @@
       <header class="toolbar">
         <div class="toolbar-group">
           <button type="button" id="btn-new" class="toolbar-action" data-i18n-title="toolbar.newTitle">
-            <img class="toolbar-btn-icon" alt="" />
+            <img class="toolbar-btn-icon" src="./src/assets/icons/add-file.png" alt="" />
             <span data-i18n="toolbar.new">New</span>
           </button>
           <button type="button" id="btn-open" class="toolbar-action" data-i18n-title="toolbar.openTitle">
-            <img class="toolbar-btn-icon" alt="" />
+            <img class="toolbar-btn-icon" src="./src/assets/icons/opened-folder.png" alt="" />
             <span data-i18n="toolbar.open">Open</span>
           </button>
-          <button type="button" id="btn-save" class="toolbar-action" data-i18n-title="toolbar.saveTitle">
-            <img class="toolbar-btn-icon" alt="" />
-            <span data-i18n="toolbar.save">Save</span>
-          </button>
-          <button type="button" id="btn-save-as" class="toolbar-action" data-i18n-title="toolbar.saveAsTitle">
-            <img class="toolbar-btn-icon" alt="" />
-            <span data-i18n="toolbar.saveAs">Save As</span>
-          </button>
+          <div class="toolbar-popover">
+            <div class="toolbar-split">
+              <button type="button" id="btn-save" class="toolbar-action" data-i18n-title="toolbar.saveTitle">
+                <img class="toolbar-btn-icon" src="./src/assets/icons/save.png" alt="" />
+                <span data-i18n="toolbar.save">Save</span>
+              </button>
+              <button type="button" id="btn-save-menu" class="toolbar-split-caret" data-i18n-title="toolbar.saveMenuTitle" aria-haspopup="menu" aria-expanded="false"></button>
+            </div>
+            <div id="save-menu" class="popover-menu popover-menu-start" hidden role="menu">
+              <button type="button" id="btn-save-as" class="popover-item" role="menuitem" data-i18n-title="toolbar.saveAsTitle">
+                <img class="toolbar-btn-icon" src="./src/assets/icons/save-as.png" alt="" />
+                <span data-i18n="toolbar.saveAs">Save As</span>
+              </button>
+            </div>
+          </div>
           <button type="button" id="btn-find" class="toolbar-action" data-i18n-title="toolbar.findTitle">
-            <img class="toolbar-btn-icon" alt="" />
+            <img class="toolbar-btn-icon" src="./src/assets/icons/search.png" alt="" />
             <span data-i18n="toolbar.find">Find</span>
           </button>
         </div>
         <div class="toolbar-sep" aria-hidden="true"></div>
-        <div class="toolbar-group">
+        <div class="toolbar-group toolbar-syntax">
           <div class="toolbar-popover">
             <button type="button" id="btn-syntax" class="toolbar-action" data-i18n-title="toolbar.syntax" aria-haspopup="menu" aria-expanded="false">
-              <img id="syntax-icon" class="toolbar-btn-icon" alt="" />
+              <img id="syntax-icon" class="toolbar-btn-icon" src="./src/assets/icons/source-code.png" alt="" />
               <span id="syntax-label"></span>
             </button>
             <div id="syntax-menu" class="popover-menu popover-menu-start" hidden role="menu"></div>
@@ -47,13 +54,13 @@
           <button type="button" id="btn-hex" class="toolbar-icon-btn toolbar-text-btn" data-i18n-title="toolbar.hexTitle" aria-pressed="false">HEX</button>
           <button type="button" id="btn-wrap" class="toolbar-icon-btn" data-i18n-title="toolbar.wrapTitle" aria-pressed="false"></button>
           <button type="button" id="btn-md" class="toolbar-icon-btn" data-i18n-title="toolbar.mdTitle" aria-pressed="false">
-            <img class="toolbar-btn-icon" alt="" />
+            <img class="toolbar-btn-icon" src="./src/assets/icons/md.png" alt="" />
           </button>
         </div>
         <div class="toolbar-group toolbar-end">
           <div class="toolbar-popover">
             <button type="button" id="btn-locale" class="toolbar-icon-btn" data-i18n-title="locale.title" aria-haspopup="menu" aria-expanded="false">
-              <img class="toolbar-btn-icon" alt="" />
+              <img class="toolbar-btn-icon" src="./src/assets/icons/language.png" alt="" />
             </button>
             <div id="locale-menu" class="popover-menu" hidden role="menu"></div>
           </div>
@@ -106,6 +113,23 @@
           <div id="encoding-menu" class="popover-menu encoding-menu" hidden role="menu"></div>
         </div>
       </footer>
+    </div>
+    <div id="add-language-dialog" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="add-language-title">
+        <h2 id="add-language-title" data-i18n="lang.addTitle">Add language</h2>
+        <p class="modal-hint" data-i18n="lang.addHint">Enter a language name, id, or extension.</p>
+        <label class="modal-field">
+          <span data-i18n="lang.typeLabel">Language</span>
+          <input id="add-language-input" type="text" spellcheck="false" autocomplete="off" data-i18n-placeholder="lang.typePlaceholder" />
+        </label>
+        <div id="add-language-suggest" class="modal-suggest" hidden></div>
+        <p id="add-language-preview" class="modal-preview"></p>
+        <p id="add-language-error" class="modal-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" id="add-language-cancel" data-i18n="dialog.cancel">Cancel</button>
+          <button type="button" id="add-language-confirm" class="modal-primary" data-i18n="lang.addConfirm">Add</button>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

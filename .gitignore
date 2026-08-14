@@ -13,9 +13,20 @@ dist-ssr
 *.local
 package-lock.json
 
+# Unused / source icon dumps
+/src/assets/edit/
+
 # Runtime portable dirs (created next to the app)
 /config/
 /data/
+
+# User-installed language packs; keep bundled presets
+/plugin/languages/*/
+!/plugin/languages/javascript/
+!/plugin/languages/python/
+!/plugin/languages/json/
+!/plugin/languages/rust/
+!/plugin/languages/markdown/
 
 # Rust / Tauri
 src-tauri/target

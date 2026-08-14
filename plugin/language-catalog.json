@@ -1,0 +1,237 @@
+{
+  "repo": "microsoft/vscode",
+  "ref": "main",
+  "languages": [
+    {
+      "id": "bat",
+      "aliases": ["Batch", "bat"],
+      "extensions": [".bat", ".cmd"],
+      "scopeName": "source.batchfile",
+      "path": "extensions/bat/syntaxes/batchfile.tmLanguage.json"
+    },
+    {
+      "id": "c",
+      "aliases": ["C"],
+      "extensions": [".c", ".h"],
+      "scopeName": "source.c",
+      "path": "extensions/cpp/syntaxes/c.tmLanguage.json"
+    },
+    {
+      "id": "clojure",
+      "aliases": ["Clojure"],
+      "extensions": [".clj", ".cljs", ".cljc", ".edn"],
+      "scopeName": "source.clojure",
+      "path": "extensions/clojure/syntaxes/clojure.tmLanguage.json"
+    },
+    {
+      "id": "coffeescript",
+      "aliases": ["CoffeeScript", "coffee"],
+      "extensions": [".coffee"],
+      "scopeName": "source.coffee",
+      "path": "extensions/coffeescript/syntaxes/coffeescript.tmLanguage.json"
+    },
+    {
+      "id": "cpp",
+      "aliases": ["C++", "cpp"],
+      "extensions": [".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx", ".ipp"],
+      "scopeName": "source.cpp",
+      "path": "extensions/cpp/syntaxes/cpp.tmLanguage.json"
+    },
+    {
+      "id": "csharp",
+      "aliases": ["C#", "csharp"],
+      "extensions": [".cs"],
+      "scopeName": "source.cs",
+      "path": "extensions/csharp/syntaxes/csharp.tmLanguage.json"
+    },
+    {
+      "id": "css",
+      "aliases": ["CSS"],
+      "extensions": [".css"],
+      "scopeName": "source.css",
+      "path": "extensions/css/syntaxes/css.tmLanguage.json"
+    },
+    {
+      "id": "dockerfile",
+      "aliases": ["Dockerfile", "docker"],
+      "extensions": [".dockerfile"],
+      "scopeName": "source.dockerfile",
+      "path": "extensions/docker/syntaxes/docker.tmLanguage.json"
+    },
+    {
+      "id": "fsharp",
+      "aliases": ["F#", "fsharp"],
+      "extensions": [".fs", ".fsi", ".fsx", ".fsscript"],
+      "scopeName": "source.fsharp",
+      "path": "extensions/fsharp/syntaxes/fsharp.tmLanguage.json"
+    },
+    {
+      "id": "go",
+      "aliases": ["Go", "golang"],
+      "extensions": [".go"],
+      "scopeName": "source.go",
+      "path": "extensions/go/syntaxes/go.tmLanguage.json"
+    },
+    {
+      "id": "groovy",
+      "aliases": ["Groovy"],
+      "extensions": [".groovy", ".gradle"],
+      "scopeName": "source.groovy",
+      "path": "extensions/groovy/syntaxes/groovy.tmLanguage.json"
+    },
+    {
+      "id": "html",
+      "aliases": ["HTML"],
+      "extensions": [".html", ".htm", ".xhtml"],
+      "scopeName": "text.html.basic",
+      "path": "extensions/html/syntaxes/html.tmLanguage.json"
+    },
+    {
+      "id": "ini",
+      "aliases": ["INI"],
+      "extensions": [".ini"],
+      "scopeName": "source.ini",
+      "path": "extensions/ini/syntaxes/ini.tmLanguage.json"
+    },
+    {
+      "id": "java",
+      "aliases": ["Java"],
+      "extensions": [".java"],
+      "scopeName": "source.java",
+      "path": "extensions/java/syntaxes/java.tmLanguage.json"
+    },
+    {
+      "id": "julia",
+      "aliases": ["Julia"],
+      "extensions": [".jl"],
+      "scopeName": "source.julia",
+      "path": "extensions/julia/syntaxes/julia.tmLanguage.json"
+    },
+    {
+      "id": "less",
+      "aliases": ["LESS"],
+      "extensions": [".less"],
+      "scopeName": "source.css.less",
+      "path": "extensions/less/syntaxes/less.tmLanguage.json"
+    },
+    {
+      "id": "lua",
+      "aliases": ["Lua"],
+      "extensions": [".lua"],
+      "scopeName": "source.lua",
+      "path": "extensions/lua/syntaxes/lua.tmLanguage.json"
+    },
+    {
+      "id": "makefile",
+      "aliases": ["Makefile", "make"],
+      "extensions": [".mak", ".mk"],
+      "scopeName": "source.makefile",
+      "path": "extensions/make/syntaxes/make.tmLanguage.json"
+    },
+    {
+      "id": "objective-c",
+      "aliases": ["Objective-C", "objc"],
+      "extensions": [".m"],
+      "scopeName": "source.objc",
+      "path": "extensions/objective-c/syntaxes/objective-c.tmLanguage.json"
+    },
+    {
+      "id": "perl",
+      "aliases": ["Perl"],
+      "extensions": [".pl", ".pm", ".pod"],
+      "scopeName": "source.perl",
+      "path": "extensions/perl/syntaxes/perl.tmLanguage.json"
+    },
+    {
+      "id": "php",
+      "aliases": ["PHP"],
+      "extensions": [".php", ".phtml"],
+      "scopeName": "source.php",
+      "path": "extensions/php/syntaxes/php.tmLanguage.json"
+    },
+    {
+      "id": "powershell",
+      "aliases": ["PowerShell", "ps1"],
+      "extensions": [".ps1", ".psm1", ".psd1"],
+      "scopeName": "source.powershell",
+      "path": "extensions/powershell/syntaxes/powershell.tmLanguage.json"
+    },
+    {
+      "id": "r",
+      "aliases": ["R"],
+      "extensions": [".r", ".R"],
+      "scopeName": "source.r",
+      "path": "extensions/r/syntaxes/r.tmLanguage.json"
+    },
+    {
+      "id": "ruby",
+      "aliases": ["Ruby", "rb"],
+      "extensions": [".rb", ".ruby"],
+      "scopeName": "source.ruby",
+      "path": "extensions/ruby/syntaxes/ruby.tmLanguage.json"
+    },
+    {
+      "id": "scss",
+      "aliases": ["SCSS", "sass"],
+      "extensions": [".scss"],
+      "scopeName": "source.css.scss",
+      "path": "extensions/scss/syntaxes/scss.tmLanguage.json"
+    },
+    {
+      "id": "shellscript",
+      "aliases": ["Shell", "Bash", "sh"],
+      "extensions": [".sh", ".bash", ".zsh", ".ksh"],
+      "scopeName": "source.shell",
+      "path": "extensions/shellscript/syntaxes/shell-unix-bash.tmLanguage.json"
+    },
+    {
+      "id": "sql",
+      "aliases": ["SQL"],
+      "extensions": [".sql"],
+      "scopeName": "source.sql",
+      "path": "extensions/sql/syntaxes/sql.tmLanguage.json"
+    },
+    {
+      "id": "swift",
+      "aliases": ["Swift"],
+      "extensions": [".swift"],
+      "scopeName": "source.swift",
+      "path": "extensions/swift/syntaxes/swift.tmLanguage.json"
+    },
+    {
+      "id": "typescript",
+      "aliases": ["TypeScript", "ts"],
+      "extensions": [".ts", ".mts", ".cts"],
+      "scopeName": "source.ts",
+      "path": "extensions/typescript-basics/syntaxes/TypeScript.tmLanguage.json"
+    },
+    {
+      "id": "typescriptreact",
+      "aliases": ["TypeScript React", "TSX"],
+      "extensions": [".tsx"],
+      "scopeName": "source.tsx",
+      "path": "extensions/typescript-basics/syntaxes/TypeScriptReact.tmLanguage.json"
+    },
+    {
+      "id": "vb",
+      "aliases": ["Visual Basic", "VB"],
+      "extensions": [".vb"],
+      "scopeName": "source.asp.vb.net",
+      "path": "extensions/vb/syntaxes/asp-vb-net.tmLanguage.json"
+    },
+    {
+      "id": "xml",
+      "aliases": ["XML"],
+      "extensions": [".xml", ".xsd", ".xsl", ".xslt", ".dtd"],
+      "scopeName": "text.xml",
+      "path": "extensions/xml/syntaxes/xml.tmLanguage.json"
+    },
+    {
+      "id": "yaml",
+      "aliases": ["YAML", "yml"],
+      "extensions": [".yaml", ".yml"],
+      "scopeName": "source.yaml",
+      "path": "extensions/yaml/syntaxes/yaml.tmLanguage.json"
+    }
+  ]
+}

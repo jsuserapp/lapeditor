@@ -7,10 +7,11 @@ import * as monaco from "monaco-editor/editor/editor.api.js";
 import editorWorkerUrl from "monaco-editor/editor/editor.worker.js?url";
 import "monaco-editor/min/vs/editor/editor.main.css";
 import { applyDomI18n, listLocales, loadLocale, t } from "./i18n";
+import { bindAddLanguageDialog, openAddLanguageDialog } from "./add-language";
 import { bindFindWidget, closeFind, openFind, refreshFind, syncFindLocale } from "./find";
 import { addFileIcon, applyToolbarIcons } from "./icons";
 import { bindTooltips, setTooltip } from "./tooltip";
-import { registerTextMateLanguages, type LanguagePluginDto } from "./textmate";
+import { registerLanguageIds, registerTextMateLanguages, type LanguagePluginDto } from "./textmate";
 import {
   applyChromeTheme,
   applyEditorTheme,
@@ -21,7 +22,6 @@ import {
   type ThemeId,
 } from "./theme";
 import { HexEditor } from "./hex";
-import { isMarkdownLanguage, MarkdownPreview } from "./markdown";
 import {
   applyMdSplitRatio,
   bindMdGutter,
@@ -114,10 +114,21 @@ type AppSettings = {
 
 const PLAINTEXT = "plaintext";
 
+function isMarkdownLanguage(languageId: string | undefined): boolean {
+  return languageId === "markdown";
+}
+
+type MdPreview = {
+  render(source: string, immediate?: boolean): void;
+  setTheme(theme: ThemeId): void;
+};
+
 const tabBar = document.querySelector<HTMLDivElement>("#tab-bar")!;
 const syntaxButton = document.querySelector<HTMLButtonElement>("#btn-syntax")!;
 const syntaxLabel = document.querySelector<HTMLSpanElement>("#syntax-label")!;
 const syntaxMenu = document.querySelector<HTMLDivElement>("#syntax-menu")!;
+const saveMenuButton = document.querySelector<HTMLButtonElement>("#btn-save-menu")!;
+const saveMenu = document.querySelector<HTMLDivElement>("#save-menu")!;
 const localeButton = document.querySelector<HTMLButtonElement>("#btn-locale")!;
 const localeMenu = document.querySelector<HTMLDivElement>("#locale-menu")!;
 const themeButton = document.querySelector<HTMLButtonElement>("#btn-theme")!;
@@ -156,7 +167,8 @@ let currentTheme: ThemeId = "dark";
 let currentLocaleId = "en";
 let uiLocales: { id: string; name: string }[] = [];
 let hexEditor: HexEditor | undefined;
-let mdPreview: MarkdownPreview | undefined;
+let mdPreview: MdPreview | undefined;
+let mdPreviewLoading: Promise<MdPreview> | null = null;
 let mdSplitRatio = MD_SPLIT_DEFAULT;
 let syncMdScrollFromEditor: (() => void) | undefined;
 const loadingMore = new Set<string>();
@@ -342,13 +354,35 @@ function tabShowsMdPreview(tab: TabState): boolean {
   return tab.mdPreview && isMarkdownLanguage(tab.languageId) && tab.viewMode !== "hex";
 }
 
+async function ensureMdPreview(): Promise<MdPreview> {
+  if (mdPreview) {
+    return mdPreview;
+  }
+  if (!mdPreviewLoading) {
+    mdPreviewLoading = import("./markdown").then((mod) => {
+      const preview = new mod.MarkdownPreview(mdHost);
+      preview.setTheme(currentTheme);
+      mdPreview = preview;
+      return preview;
+    });
+  }
+  return mdPreviewLoading;
+}
+
 function applyMdPreview(tab: TabState | undefined) {
   const on = !!tab && tabShowsMdPreview(tab);
   editorHost.classList.toggle("md-split", on);
   mdHost.hidden = !on;
   mdGutter.hidden = !on;
   if (on && tab) {
-    mdPreview?.render(tab.model.getValue(), true);
+    const source = tab.model.getValue();
+    const tabId = tab.id;
+    void ensureMdPreview().then((preview) => {
+      const current = activeTabId ? tabs.get(activeTabId) : undefined;
+      if (current?.id === tabId && tabShowsMdPreview(current)) {
+        preview.render(source, true);
+      }
+    });
   }
 }
 
@@ -795,6 +829,19 @@ function fillLanguageMenu() {
     item.textContent = languageLabel(id);
     syntaxMenu.appendChild(item);
   }
+  const footer = document.createElement("div");
+  footer.className = "popover-footer";
+  const sep = document.createElement("div");
+  sep.className = "popover-sep";
+  sep.setAttribute("role", "separator");
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "popover-item";
+  add.role = "menuitem";
+  add.dataset.action = "add-language";
+  add.textContent = t("lang.add");
+  footer.append(sep, add);
+  syntaxMenu.appendChild(footer);
 }
 
 function fillLocaleMenu(locales: { id: string; name: string }[], selectedId: string) {
@@ -883,6 +930,8 @@ function setEncodingMenuOpen(open: boolean) {
     localeButton.setAttribute("aria-expanded", "false");
     syntaxMenu.hidden = true;
     syntaxButton.setAttribute("aria-expanded", "false");
+    saveMenu.hidden = true;
+    saveMenuButton.setAttribute("aria-expanded", "false");
   }
   encodingMenu.hidden = !open;
   statusEncodingEl.setAttribute("aria-expanded", open ? "true" : "false");
@@ -1000,6 +1049,8 @@ function setLocaleMenuOpen(open: boolean) {
     statusEncodingEl.setAttribute("aria-expanded", "false");
     syntaxMenu.hidden = true;
     syntaxButton.setAttribute("aria-expanded", "false");
+    saveMenu.hidden = true;
+    saveMenuButton.setAttribute("aria-expanded", "false");
   }
   localeMenu.hidden = !open;
   localeButton.setAttribute("aria-expanded", open ? "true" : "false");
@@ -1012,9 +1063,24 @@ function setSyntaxMenuOpen(open: boolean) {
     statusEncodingEl.setAttribute("aria-expanded", "false");
     localeMenu.hidden = true;
     localeButton.setAttribute("aria-expanded", "false");
+    saveMenu.hidden = true;
+    saveMenuButton.setAttribute("aria-expanded", "false");
   }
   syntaxMenu.hidden = !open;
   syntaxButton.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function setSaveMenuOpen(open: boolean) {
+  if (open) {
+    encodingMenu.hidden = true;
+    statusEncodingEl.setAttribute("aria-expanded", "false");
+    localeMenu.hidden = true;
+    localeButton.setAttribute("aria-expanded", "false");
+    syntaxMenu.hidden = true;
+    syntaxButton.setAttribute("aria-expanded", "false");
+  }
+  saveMenu.hidden = !open;
+  saveMenuButton.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function syncLocaleButton() {
@@ -1037,7 +1103,10 @@ function applyTheme(theme: ThemeId) {
   mdPreview?.setTheme(currentTheme);
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
   if (tab && tabShowsMdPreview(tab)) {
-    mdPreview?.render(tab.model.getValue(), true);
+    void ensureMdPreview().then((preview) => {
+      preview.setTheme(currentTheme);
+      preview.render(tab.model.getValue(), true);
+    });
   }
   syncThemeButton();
 }
@@ -1334,7 +1403,9 @@ function createTab(options?: {
     refreshFind({ reveal: false });
     schedulePersistSession();
     if (tab.id === activeTabId && tabShowsMdPreview(tab)) {
-      mdPreview?.render(tab.model.getValue());
+      void ensureMdPreview().then((preview) => {
+        preview.render(tab.model.getValue());
+      });
     }
   });
 
@@ -1584,59 +1655,70 @@ async function restoreSession(): Promise<boolean> {
 
   restoringSession = true;
   try {
-    for (const item of session.tabs) {
-      if (!item.path && !item.content) {
-        continue;
-      }
-      let content = item.content;
-      let encoding = item.encoding ?? undefined;
-      let bytes: Uint8Array | undefined;
-      let diskSize = item.diskSize ?? undefined;
-      let diskLoaded = item.diskLoaded ?? undefined;
-      if (!item.dirty && item.path) {
-        try {
-          const file = await loadFilePrefix(item.path);
-          content = file.text;
-          encoding = file.encoding;
-          bytes = file.bytes;
-          diskSize = file.diskSize;
-          diskLoaded = file.diskLoaded;
-        } catch {
-          content = item.content;
+    const pending = session.tabs.filter((item) => item.path || item.content);
+    const loaded = await Promise.all(
+      pending.map(async (item) => {
+        let content = item.content;
+        let encoding = item.encoding ?? undefined;
+        let bytes: Uint8Array | undefined;
+        let diskSize = item.diskSize ?? undefined;
+        let diskLoaded = item.diskLoaded ?? undefined;
+        if (!item.dirty && item.path) {
+          try {
+            const file = await Promise.race([
+              loadFilePrefix(item.path),
+              new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error("timeout")), 4000);
+              }),
+            ]);
+            content = file.text;
+            encoding = file.encoding;
+            bytes = file.bytes;
+            diskSize = file.diskSize;
+            diskLoaded = file.diskLoaded;
+          } catch {
+            content = item.content;
+          }
         }
-      }
+        return { item, content, encoding, bytes, diskSize, diskLoaded };
+      }),
+    );
+
+    const stampTabs: TabState[] = [];
+    for (const row of loaded) {
       const tab = createTab({
-        id: item.id,
-        title: item.title,
-        path: item.path,
-        untitledNumber: item.path ? null : parseUntitledNumber(item.title),
-        languageId: item.languageId || PLAINTEXT,
-        encoding,
-        content,
-        dirty: item.dirty,
-        viewState: item.viewState,
+        id: row.item.id,
+        title: row.item.title,
+        path: row.item.path,
+        untitledNumber: row.item.path ? null : parseUntitledNumber(row.item.title),
+        languageId: row.item.languageId || PLAINTEXT,
+        encoding: row.encoding,
+        content: row.content,
+        dirty: row.item.dirty,
+        viewState: row.item.viewState,
         activate: false,
-        bytes,
-        diskSize,
-        diskLoaded,
-        viewMode: item.viewMode === "hex" ? "hex" : "text",
-        mdPreview: item.mdPreview === true,
+        bytes: row.bytes,
+        diskSize: row.diskSize,
+        diskLoaded: row.diskLoaded,
+        viewMode: row.item.viewMode === "hex" ? "hex" : "text",
+        mdPreview: row.item.mdPreview === true,
       });
-      if (item.path) {
+      if (row.item.path) {
         if (
-          item.dirty &&
-          item.lastDiskMtimeMs != null &&
-          item.lastDiskSize != null
+          row.item.dirty &&
+          row.item.lastDiskMtimeMs != null &&
+          row.item.lastDiskSize != null
         ) {
           tab.diskStamp = {
-            mtimeMs: item.lastDiskMtimeMs,
-            size: item.lastDiskSize,
+            mtimeMs: row.item.lastDiskMtimeMs,
+            size: row.item.lastDiskSize,
           };
         } else {
-          await stampTabFromDisk(tab);
+          stampTabs.push(tab);
         }
       }
     }
+    await Promise.all(stampTabs.map((tab) => stampTabFromDisk(tab)));
     const active =
       (session.activeId && tabs.has(session.activeId) && session.activeId) ||
       [...tabs.keys()][0];
@@ -1646,7 +1728,7 @@ async function restoreSession(): Promise<boolean> {
   } finally {
     restoringSession = false;
   }
-  return true;
+  return tabs.size > 0;
 }
 
 async function bindSessionFlush() {
@@ -1661,25 +1743,38 @@ async function bindSessionFlush() {
       clearTimeout(persistTimer);
       persistTimer = undefined;
     }
-    const timed = <T>(work: Promise<T>, ms: number) =>
-      Promise.race([
-        work,
-        new Promise<void>((resolve) => {
-          setTimeout(resolve, ms);
-        }),
-      ]);
-    await timed(invoke("watch_text_files", { paths: [] }), 400).catch(() => undefined);
-    await timed(persistSession(), 1500).catch((err) => {
-      console.warn("failed to persist session on close", err);
-    });
+    await Promise.race([
+      persistSession().catch((err) => {
+        console.warn("failed to persist session on close", err);
+      }),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 800);
+      }),
+    ]);
   });
 }
 
 function bindUi() {
   document.querySelector("#btn-new")!.addEventListener("click", () => createTab());
   document.querySelector("#btn-open")!.addEventListener("click", () => void openFile());
-  document.querySelector("#btn-save")!.addEventListener("click", () => void saveActive());
-  document.querySelector("#btn-save-as")!.addEventListener("click", () => void saveActiveAs());
+  document.querySelector("#btn-save")!.addEventListener("click", () => {
+    setSaveMenuOpen(false);
+    void saveActive();
+  });
+  saveMenuButton.innerHTML = `<svg viewBox="0 0 8 6" aria-hidden="true"><path fill="currentColor" d="M0 0h8L4 6z"/></svg>`;
+  saveMenuButton.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    setSaveMenuOpen(saveMenu.hidden);
+  });
+  saveMenu.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const item = (ev.target as HTMLElement).closest("#btn-save-as");
+    if (!item) {
+      return;
+    }
+    setSaveMenuOpen(false);
+    void saveActiveAs();
+  });
   document.querySelector("#btn-find")!.addEventListener("click", () => {
     openFind();
   });
@@ -1693,6 +1788,12 @@ function bindUi() {
   });
   syntaxMenu.addEventListener("click", (ev) => {
     ev.stopPropagation();
+    const add = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-action='add-language']");
+    if (add) {
+      setSyntaxMenuOpen(false);
+      void openAddLanguageDialog();
+      return;
+    }
     const item = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-language-id]");
     if (!item?.dataset.languageId) {
       return;
@@ -1741,6 +1842,7 @@ function bindUi() {
     }
     setLocaleMenuOpen(false);
     setSyntaxMenuOpen(false);
+    setSaveMenuOpen(false);
     setEncodingMenuOpen(false);
     toggleActiveEol();
   });
@@ -1789,12 +1891,14 @@ function bindUi() {
   document.addEventListener("click", () => {
     setLocaleMenuOpen(false);
     setSyntaxMenuOpen(false);
+    setSaveMenuOpen(false);
     setEncodingMenuOpen(false);
   });
   window.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") {
       setLocaleMenuOpen(false);
       setSyntaxMenuOpen(false);
+      setSaveMenuOpen(false);
       setEncodingMenuOpen(false);
     }
   });
@@ -1805,6 +1909,18 @@ function bindUi() {
       console.warn("failed to save theme", err);
     });
   });
+  try {
+    bindAddLanguageDialog({
+      getMonaco: () => monaco,
+      getPlugins: () => plugins,
+      onInstalled: () => {
+        fillLanguageMenu();
+        syncLanguageSelect();
+      },
+    });
+  } catch (err) {
+    console.warn("failed to bind add-language dialog", err);
+  }
 
   window.addEventListener("keydown", (ev) => {
     const mod = ev.ctrlKey || ev.metaKey;
@@ -1829,20 +1945,41 @@ function bindUi() {
   });
 }
 
+async function loadAndRegisterGrammars() {
+  try {
+    const grammars = await invoke<Record<string, string>>("load_language_grammars");
+    for (const plugin of plugins) {
+      const json = grammars[plugin.id];
+      if (json) {
+        plugin.grammarJson = json;
+      }
+    }
+    await registerTextMateLanguages(monaco, plugins, { resetRegistry: true });
+    const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+    if (tab && editor) {
+      monaco.editor.setModelLanguage(tab.model, tab.languageId);
+    }
+  } catch (err) {
+    console.warn("failed to register language grammars", err);
+  }
+}
+
 async function main() {
-  const settings = await invoke<AppSettings>("get_settings");
-  const locales = await listLocales();
+  applyToolbarIcons();
+  const settingsPromise = invoke<AppSettings>("get_settings");
+  const localesPromise = listLocales();
+  const pluginsPromise = invoke<LanguagePluginDto[]>("list_language_plugins");
+
+  const settings = await settingsPromise;
+  const locales = await localesPromise;
   const locale = await loadLocale(settings.locale || "en");
   fillLocaleMenu(locales, locale.id);
   mdSplitRatio = clampMdSplit(settings.mdSplit ?? MD_SPLIT_DEFAULT);
   applyTheme(settings.theme === "light" ? "light" : "dark");
-  applyToolbarIcons();
   applyDomI18n();
   bindTooltips();
   syncLocaleButton();
   wrapButton.innerHTML = wrapButtonIcon();
-  mdPreview = new MarkdownPreview(mdHost);
-  mdPreview.setTheme(currentTheme);
   applyMdSplitRatio(editorHost, mdSplitRatio);
   bindMdGutter({
     host: editorHost,
@@ -1868,9 +2005,9 @@ async function main() {
   }).fromEditor;
   syncHexButton();
 
-  plugins = await invoke<LanguagePluginDto[]>("list_language_plugins");
+  plugins = await pluginsPromise;
+  registerLanguageIds(monaco, plugins);
   defineEditorThemes(monaco);
-  await registerTextMateLanguages(monaco, plugins);
   fillLanguageMenu();
   syncLanguageSelect();
 
@@ -1941,16 +2078,27 @@ async function main() {
 
   bindUi();
   bindWindowStateSave();
-  await bindFileDrop();
   await bindSessionFlush();
 
   const restored = await restoreSession();
   if (!restored) {
     createTab();
   }
-
-  await bindFileWatch();
   updateStatusForActive();
+  layoutEditor();
+
+  void loadAndRegisterGrammars();
+
+  try {
+    await bindFileDrop();
+  } catch (err) {
+    console.warn("failed to bind file drop", err);
+  }
+  try {
+    await bindFileWatch();
+  } catch (err) {
+    console.warn("failed to bind file watch", err);
+  }
 }
 
 main().catch((err) => {
