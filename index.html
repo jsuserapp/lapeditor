@@ -10,105 +10,112 @@
   <body>
     <div id="app">
       <header class="toolbar">
+        <div class="toolbar-chrome">
+          <div class="toolbar-group toolbar-end">
+            <div class="toolbar-popover">
+              <button type="button" id="btn-locale" class="toolbar-icon-btn" data-i18n-title="locale.title" aria-haspopup="menu" aria-expanded="false">
+                <img class="toolbar-btn-icon" src="./src/assets/icons/language.png" alt="" />
+              </button>
+              <div id="locale-menu" class="popover-menu" hidden role="menu"></div>
+            </div>
+            <button type="button" id="btn-theme" class="toolbar-icon-btn" aria-label="Theme"></button>
+          </div>
+          <div id="window-controls" class="window-controls" hidden>
+            <button type="button" id="win-min" data-i18n-title="window.minimize"></button>
+            <button type="button" id="win-max" data-i18n-title="window.maximize"></button>
+            <button type="button" id="win-close" data-i18n-title="window.close"></button>
+          </div>
+        </div>
         <div class="toolbar-logo-slot">
           <img id="toolbar-logo" class="toolbar-logo" src="./src/assets/logo.png" alt="" />
         </div>
-        <div class="toolbar-group">
-          <button type="button" id="btn-new" class="toolbar-action" data-i18n-title="toolbar.newTitle">
-            <img class="toolbar-btn-icon" src="./src/assets/icons/add-file.png" alt="" />
-            <span data-i18n="toolbar.new">New</span>
-          </button>
-          <button type="button" id="btn-open" class="toolbar-action" data-i18n-title="toolbar.openTitle">
-            <img class="toolbar-btn-icon" src="./src/assets/icons/open-file.png" alt="" />
-            <span data-i18n="toolbar.open">Open</span>
-          </button>
-          <div class="toolbar-popover">
-            <div class="toolbar-split">
-              <button type="button" id="btn-save" class="toolbar-action" data-i18n-title="toolbar.saveTitle" disabled>
-                <img class="toolbar-btn-icon" src="./src/assets/icons/save.png" alt="" />
-                <span data-i18n="toolbar.save">Save</span>
-              </button>
-              <button type="button" id="btn-save-menu" class="toolbar-split-caret" data-i18n-title="toolbar.saveMenuTitle" aria-haspopup="menu" aria-expanded="false"></button>
-            </div>
-            <div id="save-menu" class="popover-menu popover-menu-start" hidden role="menu">
-              <button type="button" id="btn-save-as" class="popover-item" role="menuitem" data-i18n-title="toolbar.saveAsTitle">
-                <img class="toolbar-btn-icon" src="./src/assets/icons/save-as.png" alt="" />
-                <span data-i18n="toolbar.saveAs">Save As</span>
-              </button>
-            </div>
-          </div>
-          <button type="button" id="btn-find" class="toolbar-action" data-i18n-title="toolbar.findTitle">
-            <img class="toolbar-btn-icon" src="./src/assets/icons/search.png" alt="" />
-            <span data-i18n="toolbar.find">Find</span>
-          </button>
-        </div>
-        <div class="toolbar-sep" aria-hidden="true"></div>
-        <div class="toolbar-group">
-          <button type="button" id="btn-paste" class="toolbar-icon-btn" data-i18n-title="toolbar.pasteTitle" disabled>
-            <img class="toolbar-btn-icon" src="./src/assets/icons/paste.png" alt="" />
-          </button>
-          <button type="button" id="btn-copy" class="toolbar-icon-btn" data-i18n-title="toolbar.copyTitle" disabled>
-            <img class="toolbar-btn-icon" src="./src/assets/icons/copy.png" alt="" />
-          </button>
-          <button type="button" id="btn-cut" class="toolbar-icon-btn" data-i18n-title="toolbar.cutTitle" disabled>
-            <img class="toolbar-btn-icon" src="./src/assets/icons/cut.png" alt="" />
-          </button>
-          <button type="button" id="btn-undo" class="toolbar-icon-btn" data-i18n-title="toolbar.undoTitle" disabled>
-            <img class="toolbar-btn-icon" src="./src/assets/icons/undo.png" alt="" />
-          </button>
-          <button type="button" id="btn-redo" class="toolbar-icon-btn" data-i18n-title="toolbar.redoTitle" disabled>
-            <img class="toolbar-btn-icon" src="./src/assets/icons/redo.png" alt="" />
-          </button>
-        </div>
-        <div class="toolbar-sep" aria-hidden="true"></div>
-        <div class="toolbar-group toolbar-syntax">
-          <div class="toolbar-popover">
-            <button type="button" id="btn-syntax" class="toolbar-action" data-i18n-title="toolbar.syntax" aria-haspopup="menu" aria-expanded="false">
-              <img id="syntax-icon" class="toolbar-btn-icon" src="./src/assets/icons/source-code.png" alt="" />
-              <span id="syntax-label"></span>
+        <div class="toolbar-main">
+          <div class="toolbar-group">
+            <button type="button" id="btn-new" class="toolbar-action" data-i18n-title="toolbar.newTitle">
+              <img class="toolbar-btn-icon" src="./src/assets/icons/add-file.png" alt="" />
+              <span data-i18n="toolbar.new">New</span>
             </button>
-            <div id="syntax-menu" class="popover-menu popover-menu-start" hidden role="menu"></div>
-          </div>
-        </div>
-        <div class="toolbar-sep" aria-hidden="true"></div>
-        <div class="toolbar-group">
-          <button type="button" id="btn-format" class="toolbar-action" data-i18n-title="toolbar.formatTitle" disabled>
-            <img class="toolbar-btn-icon" src="./src/assets/icons/format.png" alt="" />
-            <span data-i18n="toolbar.format">Format</span>
-          </button>
-          <button type="button" id="btn-format-options" class="toolbar-icon-btn" data-i18n-title="toolbar.formatOptionsTitle">
-            <img class="toolbar-btn-icon" src="./src/assets/icons/manager.png" alt="" />
-          </button>
-        </div>
-        <div class="toolbar-sep" aria-hidden="true"></div>
-        <div class="toolbar-group">
-          <button type="button" id="btn-wrap" class="toolbar-icon-btn" data-i18n-title="toolbar.wrapTitle" aria-pressed="false"></button>
-          <button type="button" id="btn-hex" class="toolbar-icon-btn" data-i18n-title="toolbar.hexTitle" aria-pressed="false">
-            <img class="toolbar-btn-icon" src="./src/assets/icons/hex.png" alt="" />
-          </button>
-          <button type="button" id="btn-md" class="toolbar-icon-btn" data-i18n-title="toolbar.mdTitle" aria-pressed="false">
-            <img class="toolbar-btn-icon" src="./src/assets/icons/md.png" alt="" />
-          </button>
-        </div>
-        <div class="toolbar-group toolbar-end">
-          <div class="toolbar-popover">
-            <button type="button" id="btn-locale" class="toolbar-icon-btn" data-i18n-title="locale.title" aria-haspopup="menu" aria-expanded="false">
-              <img class="toolbar-btn-icon" src="./src/assets/icons/language.png" alt="" />
+            <button type="button" id="btn-open" class="toolbar-action" data-i18n-title="toolbar.openTitle">
+              <img class="toolbar-btn-icon" src="./src/assets/icons/open-file.png" alt="" />
+              <span data-i18n="toolbar.open">Open</span>
             </button>
-            <div id="locale-menu" class="popover-menu" hidden role="menu"></div>
+            <div class="toolbar-popover">
+              <div class="toolbar-split">
+                <button type="button" id="btn-save" class="toolbar-action" data-i18n-title="toolbar.saveTitle" disabled>
+                  <img class="toolbar-btn-icon" src="./src/assets/icons/save.png" alt="" />
+                  <span data-i18n="toolbar.save">Save</span>
+                </button>
+                <button type="button" id="btn-save-menu" class="toolbar-split-caret" data-i18n-title="toolbar.saveMenuTitle" aria-haspopup="menu" aria-expanded="false"></button>
+              </div>
+              <div id="save-menu" class="popover-menu popover-menu-start" hidden role="menu">
+                <button type="button" id="btn-save-as" class="popover-item" role="menuitem" data-i18n-title="toolbar.saveAsTitle">
+                  <img class="toolbar-btn-icon" src="./src/assets/icons/save-as.png" alt="" />
+                  <span data-i18n="toolbar.saveAs">Save As</span>
+                </button>
+              </div>
+            </div>
+            <button type="button" id="btn-find" class="toolbar-action" data-i18n-title="toolbar.findTitle">
+              <img class="toolbar-btn-icon" src="./src/assets/icons/search.png" alt="" />
+              <span data-i18n="toolbar.find">Find</span>
+            </button>
           </div>
-          <button type="button" id="btn-theme" class="toolbar-icon-btn" aria-label="Theme"></button>
-        </div>
-        <div id="window-controls" class="window-controls" hidden>
-          <button type="button" id="win-min" data-i18n-title="window.minimize"></button>
-          <button type="button" id="win-max" data-i18n-title="window.maximize"></button>
-          <button type="button" id="win-close" data-i18n-title="window.close"></button>
+          <div class="toolbar-sep" aria-hidden="true"></div>
+          <div class="toolbar-group">
+            <button type="button" id="btn-wrap" class="toolbar-icon-btn" data-i18n-title="toolbar.wrapTitle" aria-pressed="false"></button>
+            <button type="button" id="btn-hex" class="toolbar-icon-btn" data-i18n-title="toolbar.hexTitle" aria-pressed="false">
+              <img class="toolbar-btn-icon" src="./src/assets/icons/hex.png" alt="" />
+            </button>
+            <button type="button" id="btn-md" class="toolbar-icon-btn" data-i18n-title="toolbar.mdTitle" aria-pressed="false">
+              <img class="toolbar-btn-icon" src="./src/assets/icons/md.png" alt="" />
+            </button>
+          </div>
+          <div class="toolbar-sep" aria-hidden="true"></div>
+          <div class="toolbar-group">
+            <button type="button" id="btn-paste" class="toolbar-icon-btn" data-i18n-title="toolbar.pasteTitle" disabled>
+              <img class="toolbar-btn-icon" src="./src/assets/icons/paste.png" alt="" />
+            </button>
+            <button type="button" id="btn-copy" class="toolbar-icon-btn" data-i18n-title="toolbar.copyTitle" disabled>
+              <img class="toolbar-btn-icon" src="./src/assets/icons/copy.png" alt="" />
+            </button>
+            <button type="button" id="btn-cut" class="toolbar-icon-btn" data-i18n-title="toolbar.cutTitle" disabled>
+              <img class="toolbar-btn-icon" src="./src/assets/icons/cut.png" alt="" />
+            </button>
+            <button type="button" id="btn-undo" class="toolbar-icon-btn" data-i18n-title="toolbar.undoTitle" disabled>
+              <img class="toolbar-btn-icon" src="./src/assets/icons/undo.png" alt="" />
+            </button>
+            <button type="button" id="btn-redo" class="toolbar-icon-btn" data-i18n-title="toolbar.redoTitle" disabled>
+              <img class="toolbar-btn-icon" src="./src/assets/icons/redo.png" alt="" />
+            </button>
+          </div>
+          <div class="toolbar-sep" aria-hidden="true"></div>
+          <div class="toolbar-group toolbar-syntax">
+            <div class="toolbar-popover">
+              <button type="button" id="btn-syntax" class="toolbar-action" data-i18n-title="toolbar.syntax" aria-haspopup="menu" aria-expanded="false">
+                <img id="syntax-icon" class="toolbar-btn-icon" src="./src/assets/icons/source-code.png" alt="" />
+                <span id="syntax-label"></span>
+              </button>
+              <div id="syntax-menu" class="popover-menu popover-menu-start" hidden role="menu"></div>
+            </div>
+          </div>
+          <div class="toolbar-sep" aria-hidden="true"></div>
+          <div class="toolbar-group">
+            <button type="button" id="btn-format" class="toolbar-action" data-i18n-title="toolbar.formatTitle" disabled>
+              <img class="toolbar-btn-icon" src="./src/assets/icons/format.png" alt="" />
+              <span data-i18n="toolbar.format">Format</span>
+            </button>
+            <button type="button" id="btn-format-options" class="toolbar-icon-btn" data-i18n-title="toolbar.formatOptionsTitle">
+              <img class="toolbar-btn-icon" src="./src/assets/icons/manager.png" alt="" />
+            </button>
+          </div>
         </div>
       </header>
       <div id="workbench">
         <aside id="activity-bar">
           <button type="button" id="btn-explorer" class="activity-btn" aria-pressed="false" data-i18n-title="explorer.toggle">
             <img class="activity-btn-icon" src="./src/assets/icons/documents.png" alt="" />
+          </button>
+          <button type="button" id="btn-settings" class="activity-btn activity-btn-end" aria-pressed="false" data-i18n-title="settings.toggle">
+            <img class="activity-btn-icon" src="./src/assets/icons/gear.png" alt="" />
           </button>
         </aside>
         <aside id="sidebar" hidden>
@@ -159,6 +166,21 @@
           </div>
         </div>
       </main>
+          <section id="settings-host" class="settings-page" hidden>
+            <h2 id="settings-title" data-i18n="settings.title">Settings</h2>
+            <div class="settings-section">
+              <h3 data-i18n="settings.editor">Editor</h3>
+              <label class="settings-field">
+                <span data-i18n="settings.fontFamily">Font</span>
+                <input id="settings-font-family" type="text" spellcheck="false" autocomplete="off" list="settings-font-list" />
+              </label>
+              <datalist id="settings-font-list"></datalist>
+              <label class="settings-field">
+                <span data-i18n="settings.fontSize">Font size</span>
+                <input id="settings-font-size" type="number" min="10" max="28" step="1" />
+              </label>
+            </div>
+          </section>
         </div>
       </div>
       <footer class="status-bar" id="status-bar">

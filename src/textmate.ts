@@ -111,6 +111,16 @@ export function registerLanguageIds(
       aliases: plugin.aliases,
       extensions: plugin.extensions,
     });
+    monaco.languages.setLanguageConfiguration(plugin.id, {
+      brackets: [
+        ["{", "}"],
+        ["[", "]"],
+        ["(", ")"],
+      ],
+      folding: {
+        offSide: true,
+      },
+    });
     existing.add(plugin.id);
   }
 }
@@ -136,6 +146,16 @@ export async function registerTextMateLanguage(
       id: languageId,
       aliases: plugin.aliases,
       extensions: plugin.extensions,
+    });
+    monaco.languages.setLanguageConfiguration(languageId, {
+      brackets: [
+        ["{", "}"],
+        ["[", "]"],
+        ["(", ")"],
+      ],
+      folding: {
+        offSide: true,
+      },
     });
   }
 

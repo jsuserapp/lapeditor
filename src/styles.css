@@ -109,14 +109,51 @@ body {
 }
 
 .toolbar {
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
+  --toolbar-row-height: 32px;
+  display: flow-root;
   padding: 0;
   background: var(--bg-elevated);
   user-select: none;
   min-width: 0;
   overflow: visible;
+}
+
+.toolbar-chrome {
+  float: right;
+  display: flex;
+  align-items: stretch;
+  height: var(--toolbar-row-height);
+}
+
+.toolbar-main {
+  display: block;
+  min-width: 0;
+}
+
+.toolbar-main > .toolbar-group {
+  display: inline-flex;
+  vertical-align: top;
+  margin-right: 10px;
+}
+
+.toolbar-main > .toolbar-group:not(:last-child) {
+  position: relative;
+  padding-right: 10px;
+}
+
+.toolbar-main > .toolbar-group:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  transform: translateY(-50%);
+}
+
+.toolbar-main > .toolbar-sep {
+  display: none;
 }
 
 .toolbar[data-tauri-drag-region] {
@@ -126,17 +163,19 @@ body {
 
 .toolbar button,
 .toolbar .toolbar-popover,
+.toolbar .toolbar-chrome,
 .toolbar .window-controls {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
 
 .toolbar-logo-slot {
+  float: left;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 var(--activity-bar-width);
   width: var(--activity-bar-width);
+  height: var(--toolbar-row-height);
 }
 
 .toolbar-logo {
@@ -151,7 +190,7 @@ body {
   display: flex;
   align-items: stretch;
   gap: 5px;
-  min-width: 0;
+  flex: 0 0 auto;
 }
 
 .toolbar-sep {
@@ -179,10 +218,12 @@ body {
   align-items: center;
   gap: 2px;
   padding: 4px 5px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 #btn-new {
-  padding-left: 0;
+  margin-left: 10px;
 }
 
 .toolbar-btn-icon {
@@ -305,7 +346,7 @@ body {
 
 .toolbar-end {
   flex: 0 0 auto;
-  margin-left: auto;
+  align-self: stretch;
 }
 
 .window-controls {
@@ -472,7 +513,7 @@ body {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 0 6px 6px 0;
+  padding: 0 6px 2px 0;
   column-gap: 6px;
   background: var(--bg-elevated);
 }
@@ -498,11 +539,16 @@ body {
   z-index: 3;
 }
 
+.activity-btn-end {
+  margin-top: auto;
+  transform: translateY(10px);
+}
+
 .activity-btn {
+  position: relative;
   width: var(--activity-bar-width);
   height: 36px;
   border: none;
-  border-left: 2px solid transparent;
   background: transparent;
   color: var(--icon-color);
   display: inline-flex;
@@ -512,16 +558,25 @@ body {
   padding: 0;
 }
 
-.activity-btn:hover {
+.activity-btn::before {
+  content: "";
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: transparent;
+}
+
+.activity-btn:hover::before {
   background: var(--btn-hover);
 }
 
-.activity-btn[aria-pressed="true"] {
-  border-left-color: var(--tab-active-title);
+.activity-btn[aria-pressed="true"]::before {
   background: var(--btn-active);
 }
 
 .activity-btn-icon {
+  position: relative;
   display: block;
   width: 20px;
   height: 20px;
@@ -567,6 +622,7 @@ body {
 }
 
 #center {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -590,6 +646,59 @@ body {
 #workbench:not(.explorer-open) #center {
   grid-column: 2;
   grid-row: 1;
+}
+
+.settings-page {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  overflow: auto;
+  padding: 28px 36px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.settings-page[hidden] {
+  display: none !important;
+}
+
+.settings-page h2 {
+  margin: 0 0 22px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.settings-section h3 {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.settings-field {
+  display: grid;
+  grid-template-columns: 140px minmax(160px, 320px);
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.settings-field input {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.settings-field input:focus {
+  outline: none;
+  border-color: var(--accent-hover);
 }
 
 #sidebar[hidden],
@@ -1045,10 +1154,11 @@ body {
 .status-bar {
   display: flex;
   align-items: stretch;
-  min-height: 22px;
+  min-height: 28px;
   background: var(--bg-elevated);
   color: var(--text);
   font-size: 12px;
+  line-height: 1;
   user-select: none;
   min-width: 0;
 }
@@ -1060,6 +1170,11 @@ body {
   gap: 18px;
   padding: 0 14px;
   white-space: nowrap;
+  line-height: 1;
+}
+
+#status-stats {
+  padding-left: calc(var(--activity-bar-width) + 6px);
 }
 
 .status-cell::after {

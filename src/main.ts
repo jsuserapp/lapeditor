@@ -4,6 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as monaco from "monaco-editor/editor/editor.api.js";
 import editorWorkerUrl from "monaco-editor/editor/editor.worker.js?url";
+import "monaco-editor/editor/contrib/folding/browser/folding.js";
 import "monaco-editor/min/vs/editor/editor.main.css";
 import { applyDomI18n, listLocales, loadLocale, t } from "./i18n";
 import { bindAddLanguageDialog, openAddLanguageDialog } from "./add-language";
@@ -33,6 +34,12 @@ import {
   type ThemeId,
 } from "./theme";
 import { bindExplorer, type ExplorerApi } from "./explorer";
+import {
+  bindSettings,
+  DEFAULT_FONT_FAMILY,
+  DEFAULT_FONT_SIZE,
+  type SettingsApi,
+} from "./settings";
 import { HexEditor } from "./hex";
 import {
   applyMdSplitRatio,
@@ -126,6 +133,8 @@ type AppSettings = {
   explorerOpen?: boolean;
   explorerWidth?: number;
   workspaceFolder?: string | null;
+  fontFamily?: string;
+  fontSize?: number;
 };
 
 const PLAINTEXT = "plaintext";
@@ -192,6 +201,7 @@ let currentLocaleId = "en";
 let uiLocales: { id: string; name: string }[] = [];
 let hexEditor: HexEditor | undefined;
 let explorer: ExplorerApi | undefined;
+let settingsUi: SettingsApi | undefined;
 let formatIndent: FormatIndent = "2";
 let formatterCommands: FormatterCommandInfo[] = [];
 let mdPreview: MdPreview | undefined;
@@ -1502,6 +1512,7 @@ function activateTab(id: string) {
   }
   renderTabs();
   syncLanguageSelect();
+  settingsUi?.setOpen(false);
   explorer?.revealPath(tab.path);
   void showTabView(tab).then(() => refreshFind({ reveal: false }));
   schedulePersistSession();
@@ -2046,6 +2057,7 @@ function bindUi() {
       syncEditActions();
       syncFindLocale();
       explorer?.syncLocale();
+      settingsUi?.syncLocale();
       syncTitlebarLocale();
     })();
   });
@@ -2225,6 +2237,18 @@ async function main() {
   bindTooltips();
   syncLocaleButton();
   wrapButton.innerHTML = wrapButtonIcon();
+  settingsUi = bindSettings({
+    getEditor: () => editor,
+    onPersist: (patch) => {
+      void invoke("update_settings", patch).catch((err) => {
+        console.warn("failed to save editor settings", err);
+      });
+    },
+  });
+  settingsUi.applyFromSettings(
+    settings.fontFamily ?? DEFAULT_FONT_FAMILY,
+    settings.fontSize ?? DEFAULT_FONT_SIZE,
+  );
   explorer = bindExplorer({
     onOpenFile: (path) => {
       void openPath(path);
@@ -2285,16 +2309,24 @@ async function main() {
     language: PLAINTEXT,
     theme: monacoThemeName(currentTheme),
     automaticLayout: false,
-    fontSize: 14,
-    fontFamily: "Cascadia Code, Consolas, 'Courier New', monospace",
+    fontSize: settings.fontSize ?? DEFAULT_FONT_SIZE,
+    fontFamily: settings.fontFamily ?? DEFAULT_FONT_FAMILY,
     minimap: { enabled: false },
     wordWrap: "off",
+    folding: true,
+    foldingStrategy: "indentation",
+    showFoldingControls: "mouseover",
+    bracketPairColorization: { enabled: true },
     ...monacoIndentOptions(formatIndent),
     find: {
       seedSearchStringFromSelection: "never",
       addExtraSpaceOnTop: false,
     },
   });
+  settingsUi?.applyFromSettings(
+    settings.fontFamily ?? DEFAULT_FONT_FAMILY,
+    settings.fontSize ?? DEFAULT_FONT_SIZE,
+  );
   bindFindWidget({
     getEditor: () => editor,
     isHexView: () => {

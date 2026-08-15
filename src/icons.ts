@@ -1,6 +1,7 @@
 import addFileIcon from "./assets/icons/add-file.png";
 import appLogo from "./assets/logo.png";
 import documentsIcon from "./assets/icons/documents.png";
+import gearIcon from "./assets/icons/gear.png";
 import languageIcon from "./assets/icons/language.png";
 import openFileIcon from "./assets/icons/open-file.png";
 import saveIcon from "./assets/icons/save.png";
@@ -9,7 +10,7 @@ import searchIcon from "./assets/icons/search.png";
 import sourceCodeIcon from "./assets/icons/source-code.png";
 import markdownIcon from "./assets/icons/md.png";
 import formatIcon from "./assets/icons/format.png";
-import formatOptionsIcon from "./assets/icons/manager.png";
+import formatOptionsIcon from "./assets/icons/config.png";
 import hexIcon from "./assets/icons/hex.png";
 import pasteIcon from "./assets/icons/paste.png";
 import copyIcon from "./assets/icons/copy.png";
@@ -44,4 +45,5 @@ export function applyToolbarIcons() {
   setImg(document.querySelector("#btn-undo .toolbar-btn-icon"), undoIcon);
   setImg(document.querySelector("#btn-redo .toolbar-btn-icon"), redoIcon);
   setImg(document.querySelector("#btn-explorer .activity-btn-icon"), documentsIcon);
+  setImg(document.querySelector("#btn-settings .activity-btn-icon"), gearIcon);
 }

@@ -20,6 +20,10 @@ pub struct Settings {
     pub explorer_width: f64,
     #[serde(default)]
     pub workspace_folder: Option<String>,
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: f64,
 }
 
 fn default_zoom() -> f64 {
@@ -46,6 +50,14 @@ fn default_explorer_width() -> f64 {
     240.0
 }
 
+fn default_font_family() -> String {
+    "Cascadia Code, Consolas, 'Courier New', monospace".into()
+}
+
+fn default_font_size() -> f64 {
+    14.0
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -56,6 +68,8 @@ impl Default for Settings {
             explorer_open: default_explorer_open(),
             explorer_width: default_explorer_width(),
             workspace_folder: None,
+            font_family: default_font_family(),
+            font_size: default_font_size(),
         }
     }
 }
@@ -109,6 +123,12 @@ pub fn load_settings() -> Settings {
             settings.workspace_folder = None;
         }
     }
+    if settings.font_family.trim().is_empty() {
+        settings.font_family = default_font_family();
+    }
+    if !(settings.font_size >= 10.0 && settings.font_size <= 28.0) {
+        settings.font_size = default_font_size();
+    }
     settings
 }
 
@@ -119,6 +139,8 @@ pub fn update_settings(
     explorer_open: Option<bool>,
     explorer_width: Option<f64>,
     workspace_folder: Option<String>,
+    font_family: Option<String>,
+    font_size: Option<f64>,
 ) -> Result<Settings, String> {
     let mut settings = load_settings();
     if let Some(locale) = locale {
@@ -152,6 +174,17 @@ pub fn update_settings(
             Some(trimmed.to_string())
         };
     }
+    if let Some(font_family) = font_family {
+        let trimmed = font_family.trim();
+        if !trimmed.is_empty() {
+            settings.font_family = trimmed.to_string();
+        }
+    }
+    if let Some(font_size) = font_size {
+        if font_size >= 10.0 && font_size <= 28.0 {
+            settings.font_size = font_size.round();
+        }
+    }
     save_settings(&settings)?;
     Ok(settings)
 }
@@ -170,7 +203,7 @@ fn is_normal_position(x: i32, y: i32) -> bool {
 }
 
 fn is_normal_size(width: u32, height: u32) -> bool {
-    width >= 640 && height >= 420 && width <= 20_000 && height <= 20_000
+    width >= 800 && height >= 500 && width <= 20_000 && height <= 20_000
 }
 
 struct RestoredFrame {

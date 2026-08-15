@@ -235,6 +235,8 @@ fn update_settings(
     explorer_open: Option<bool>,
     explorer_width: Option<f64>,
     workspace_folder: Option<String>,
+    font_family: Option<String>,
+    font_size: Option<f64>,
 ) -> Result<config::Settings, String> {
     config::update_settings(
         locale,
@@ -243,6 +245,8 @@ fn update_settings(
         explorer_open,
         explorer_width,
         workspace_folder,
+        font_family,
+        font_size,
     )
 }
 
