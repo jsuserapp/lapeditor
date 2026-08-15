@@ -128,6 +128,10 @@ pub fn settings_path() -> PathBuf {
     config_dir().join("settings.json")
 }
 
+pub fn formatters_path() -> PathBuf {
+    config_dir().join("formatters.json")
+}
+
 pub fn window_state_path() -> PathBuf {
     config_dir().join("window.json")
 }

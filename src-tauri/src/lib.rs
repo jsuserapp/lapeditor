@@ -2,13 +2,18 @@ mod config;
 mod encoding;
 mod filebytes;
 mod filewatch;
+mod format;
 mod languages;
 mod locale;
 mod paths;
 mod session;
 
 use encoding::TextFile;
-use filewatch::{stat_text_file as stat_text_file_impl, watch_text_files as watch_text_files_impl, FileStat, FileWatchState};
+use filewatch::{
+    set_explorer_expanded as set_explorer_expanded_impl, stat_text_file as stat_text_file_impl,
+    watch_explorer_dirs as watch_explorer_dirs_impl, watch_text_files as watch_text_files_impl,
+    FileStat, FileWatchState,
+};
 use languages::{
     install_language_plugin as install_language_plugin_impl,
     list_language_catalog as list_language_catalog_impl,
@@ -117,10 +122,63 @@ fn watch_text_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), Str
 }
 
 #[tauri::command]
+fn watch_explorer_dirs(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    watch_explorer_dirs_impl(app, paths)
+}
+
+#[tauri::command]
+fn set_explorer_expanded(app: tauri::AppHandle, paths: Vec<String>) {
+    set_explorer_expanded_impl(app, paths)
+}
+
+#[tauri::command]
 fn pick_open_file(app: tauri::AppHandle, title: Option<String>) -> Result<Option<String>, String> {
     let title = title.unwrap_or_else(|| "Open File".into());
     let file = app.dialog().file().set_title(title).blocking_pick_file();
     Ok(file.and_then(file_path_to_string))
+}
+
+#[tauri::command]
+fn pick_open_folder(app: tauri::AppHandle, title: Option<String>) -> Result<Option<String>, String> {
+    let title = title.unwrap_or_else(|| "Open Folder".into());
+    let folder = app.dialog().file().set_title(title).blocking_pick_folder();
+    Ok(folder.and_then(file_path_to_string))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirEntryDto {
+    name: String,
+    path: String,
+    is_dir: bool,
+}
+
+#[tauri::command]
+fn list_dir_entries(path: String) -> Result<Vec<DirEntryDto>, String> {
+    let root = PathBuf::from(&path);
+    if !root.is_dir() {
+        return Err(format!("not a directory: {path}"));
+    }
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&root).map_err(|e| format!("read {path}: {e}"))? {
+        let entry = entry.map_err(|e| format!("read {path}: {e}"))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == "." || name == ".." {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|e| format!("stat {}: {e}", entry.path().display()))?;
+        entries.push(DirEntryDto {
+            name,
+            path: entry.path().to_string_lossy().into_owned(),
+            is_dir: file_type.is_dir(),
+        });
+    }
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+    });
+    Ok(entries)
 }
 
 #[tauri::command]
@@ -174,8 +232,18 @@ fn update_settings(
     locale: Option<String>,
     theme: Option<String>,
     md_split: Option<f64>,
+    explorer_open: Option<bool>,
+    explorer_width: Option<f64>,
+    workspace_folder: Option<String>,
 ) -> Result<config::Settings, String> {
-    config::update_settings(locale, theme, md_split)
+    config::update_settings(
+        locale,
+        theme,
+        md_split,
+        explorer_open,
+        explorer_width,
+        workspace_folder,
+    )
 }
 
 #[tauri::command]
@@ -211,6 +279,11 @@ fn save_window_state(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn uses_custom_titlebar() -> bool {
+    cfg!(windows)
+}
+
+#[tauri::command]
 fn load_session() -> session::Session {
     session::load_session()
 }
@@ -218,6 +291,54 @@ fn load_session() -> session::Session {
 #[tauri::command]
 fn save_session(session: session::Session) -> Result<(), String> {
     session::save_session(session)
+}
+
+#[tauri::command]
+fn get_formatter_config(app: tauri::AppHandle) -> format::FormatterConfigDto {
+    format::get_formatter_config(&app)
+}
+
+#[tauri::command]
+fn save_format_indent(indent: String) -> Result<format::FormatterFile, String> {
+    format::save_format_indent(&indent)
+}
+
+#[tauri::command]
+fn save_formatter_command(
+    language_id: String,
+    program: String,
+    args: Vec<String>,
+) -> Result<format::FormatterFile, String> {
+    format::save_formatter_command(&language_id, &program, args)
+}
+
+#[tauri::command]
+fn remove_formatter_command(language_id: String) -> Result<format::FormatterFile, String> {
+    format::remove_formatter_command(&language_id)
+}
+
+#[tauri::command]
+fn format_with_command(
+    app: tauri::AppHandle,
+    language_id: String,
+    text: String,
+) -> Result<String, String> {
+    format::format_with_command(&app, &language_id, &text)
+}
+
+fn focus_main_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if window.is_minimized().unwrap_or(false) {
+        let _ = window.unminimize();
+    }
+    let _ = window.show();
+    // Windows often blocks SetForegroundWindow from a background process.
+    // A brief always-on-top pulse lets the existing window come forward.
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_focus();
+    let _ = window.set_always_on_top(false);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -233,6 +354,9 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            focus_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(FileWatchState::new())
@@ -251,7 +375,11 @@ pub fn run() {
             convert_bytes,
             stat_text_file,
             watch_text_files,
+            watch_explorer_dirs,
+            set_explorer_expanded,
             pick_open_file,
+            pick_open_folder,
+            list_dir_entries,
             pick_save_file,
             language_id_for_path,
             get_settings,
@@ -261,14 +389,25 @@ pub fn run() {
             set_zoom,
             zoom_by,
             save_window_state,
+            uses_custom_titlebar,
             load_session,
-            save_session
+            save_session,
+            get_formatter_config,
+            save_format_indent,
+            save_formatter_command,
+            remove_formatter_command,
+            format_with_command
         ])
         .setup(|app| {
             paths::seed_locale_files(app.handle());
             if let Some(window) = app.get_webview_window("main") {
                 if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png")) {
                     let _ = window.set_icon(icon);
+                }
+                #[cfg(windows)]
+                {
+                    let _ = window.set_decorations(false);
+                    let _ = window.set_shadow(true);
                 }
                 config::restore_window_state(&window);
                 let _ = window.set_zoom(config::load_settings().zoom);

@@ -43,6 +43,22 @@ struct LanguageManifest {
     #[serde(rename = "scopeName")]
     scope_name: String,
     grammar: String,
+    #[serde(default)]
+    formatter: Option<ManifestFormatter>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManifestFormatter {
+    kind: String,
+    program: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandFormatterSpec {
+    pub program: String,
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,7 +93,7 @@ fn default_ref() -> String {
     "main".into()
 }
 
-fn valid_language_id(id: &str) -> bool {
+pub fn valid_language_id(id: &str) -> bool {
     let mut chars = id.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -135,6 +151,29 @@ fn read_manifests(app: &AppHandle) -> Result<Vec<(std::path::PathBuf, LanguageMa
     }
     manifests.sort_by(|a, b| a.1.id.cmp(&b.1.id));
     Ok(manifests)
+}
+
+pub fn command_formatter_for(app: &AppHandle, language_id: &str) -> Option<CommandFormatterSpec> {
+    let Ok(manifests) = read_manifests(app) else {
+        return None;
+    };
+    manifests.into_iter().find_map(|(_, manifest)| {
+        if !manifest.id.eq_ignore_ascii_case(language_id) {
+            return None;
+        }
+        let formatter = manifest.formatter?;
+        if !formatter.kind.eq_ignore_ascii_case("command") {
+            return None;
+        }
+        let program = formatter.program?.trim().to_string();
+        if program.is_empty() {
+            return None;
+        }
+        Some(CommandFormatterSpec {
+            program,
+            args: formatter.args,
+        })
+    })
 }
 
 pub fn list_language_plugin_info(app: &AppHandle) -> Result<Vec<LanguagePluginInfo>, String> {

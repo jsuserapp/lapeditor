@@ -10,18 +10,21 @@
   <body>
     <div id="app">
       <header class="toolbar">
+        <div class="toolbar-logo-slot">
+          <img id="toolbar-logo" class="toolbar-logo" src="./src/assets/logo.png" alt="" />
+        </div>
         <div class="toolbar-group">
           <button type="button" id="btn-new" class="toolbar-action" data-i18n-title="toolbar.newTitle">
             <img class="toolbar-btn-icon" src="./src/assets/icons/add-file.png" alt="" />
             <span data-i18n="toolbar.new">New</span>
           </button>
           <button type="button" id="btn-open" class="toolbar-action" data-i18n-title="toolbar.openTitle">
-            <img class="toolbar-btn-icon" src="./src/assets/icons/opened-folder.png" alt="" />
+            <img class="toolbar-btn-icon" src="./src/assets/icons/open-file.png" alt="" />
             <span data-i18n="toolbar.open">Open</span>
           </button>
           <div class="toolbar-popover">
             <div class="toolbar-split">
-              <button type="button" id="btn-save" class="toolbar-action" data-i18n-title="toolbar.saveTitle">
+              <button type="button" id="btn-save" class="toolbar-action" data-i18n-title="toolbar.saveTitle" disabled>
                 <img class="toolbar-btn-icon" src="./src/assets/icons/save.png" alt="" />
                 <span data-i18n="toolbar.save">Save</span>
               </button>
@@ -40,6 +43,24 @@
           </button>
         </div>
         <div class="toolbar-sep" aria-hidden="true"></div>
+        <div class="toolbar-group">
+          <button type="button" id="btn-paste" class="toolbar-icon-btn" data-i18n-title="toolbar.pasteTitle" disabled>
+            <img class="toolbar-btn-icon" src="./src/assets/icons/paste.png" alt="" />
+          </button>
+          <button type="button" id="btn-copy" class="toolbar-icon-btn" data-i18n-title="toolbar.copyTitle" disabled>
+            <img class="toolbar-btn-icon" src="./src/assets/icons/copy.png" alt="" />
+          </button>
+          <button type="button" id="btn-cut" class="toolbar-icon-btn" data-i18n-title="toolbar.cutTitle" disabled>
+            <img class="toolbar-btn-icon" src="./src/assets/icons/cut.png" alt="" />
+          </button>
+          <button type="button" id="btn-undo" class="toolbar-icon-btn" data-i18n-title="toolbar.undoTitle" disabled>
+            <img class="toolbar-btn-icon" src="./src/assets/icons/undo.png" alt="" />
+          </button>
+          <button type="button" id="btn-redo" class="toolbar-icon-btn" data-i18n-title="toolbar.redoTitle" disabled>
+            <img class="toolbar-btn-icon" src="./src/assets/icons/redo.png" alt="" />
+          </button>
+        </div>
+        <div class="toolbar-sep" aria-hidden="true"></div>
         <div class="toolbar-group toolbar-syntax">
           <div class="toolbar-popover">
             <button type="button" id="btn-syntax" class="toolbar-action" data-i18n-title="toolbar.syntax" aria-haspopup="menu" aria-expanded="false">
@@ -51,8 +72,20 @@
         </div>
         <div class="toolbar-sep" aria-hidden="true"></div>
         <div class="toolbar-group">
-          <button type="button" id="btn-hex" class="toolbar-icon-btn toolbar-text-btn" data-i18n-title="toolbar.hexTitle" aria-pressed="false">HEX</button>
+          <button type="button" id="btn-format" class="toolbar-action" data-i18n-title="toolbar.formatTitle" disabled>
+            <img class="toolbar-btn-icon" src="./src/assets/icons/format.png" alt="" />
+            <span data-i18n="toolbar.format">Format</span>
+          </button>
+          <button type="button" id="btn-format-options" class="toolbar-icon-btn" data-i18n-title="toolbar.formatOptionsTitle">
+            <img class="toolbar-btn-icon" src="./src/assets/icons/manager.png" alt="" />
+          </button>
+        </div>
+        <div class="toolbar-sep" aria-hidden="true"></div>
+        <div class="toolbar-group">
           <button type="button" id="btn-wrap" class="toolbar-icon-btn" data-i18n-title="toolbar.wrapTitle" aria-pressed="false"></button>
+          <button type="button" id="btn-hex" class="toolbar-icon-btn" data-i18n-title="toolbar.hexTitle" aria-pressed="false">
+            <img class="toolbar-btn-icon" src="./src/assets/icons/hex.png" alt="" />
+          </button>
           <button type="button" id="btn-md" class="toolbar-icon-btn" data-i18n-title="toolbar.mdTitle" aria-pressed="false">
             <img class="toolbar-btn-icon" src="./src/assets/icons/md.png" alt="" />
           </button>
@@ -66,7 +99,29 @@
           </div>
           <button type="button" id="btn-theme" class="toolbar-icon-btn" aria-label="Theme"></button>
         </div>
+        <div id="window-controls" class="window-controls" hidden>
+          <button type="button" id="win-min" data-i18n-title="window.minimize"></button>
+          <button type="button" id="win-max" data-i18n-title="window.maximize"></button>
+          <button type="button" id="win-close" data-i18n-title="window.close"></button>
+        </div>
       </header>
+      <div id="workbench">
+        <aside id="activity-bar">
+          <button type="button" id="btn-explorer" class="activity-btn" aria-pressed="false" data-i18n-title="explorer.toggle">
+            <img class="activity-btn-icon" src="./src/assets/icons/documents.png" alt="" />
+          </button>
+        </aside>
+        <aside id="sidebar" hidden>
+          <div class="sidebar-header">
+            <span id="sidebar-title" data-i18n="explorer.title">Explorer</span>
+            <button type="button" id="btn-explorer-folder" class="sidebar-icon-btn" data-i18n-title="explorer.openFolderTitle">
+              <img src="./src/assets/icons/opened-folder.png" alt="" />
+            </button>
+          </div>
+          <div id="explorer-tree" class="explorer-tree"></div>
+        </aside>
+        <div id="sidebar-gutter" hidden></div>
+        <div id="center">
       <div class="tab-bar" id="tab-bar"></div>
       <main id="editor-host">
         <div id="monaco-host"></div>
@@ -104,6 +159,8 @@
           </div>
         </div>
       </main>
+        </div>
+      </div>
       <footer class="status-bar" id="status-bar">
         <div class="status-cell" id="status-stats"></div>
         <div class="status-cell" id="status-cursor"></div>
@@ -129,6 +186,58 @@
           <button type="button" id="add-language-cancel" data-i18n="dialog.cancel">Cancel</button>
           <button type="button" id="add-language-confirm" class="modal-primary" data-i18n="lang.addConfirm">Add</button>
         </div>
+      </div>
+    </div>
+    <div id="format-options-dialog" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="format-options-title">
+        <h2 id="format-options-title" data-i18n="format.optionsTitle">Format options</h2>
+        <p class="modal-hint" data-i18n="format.optionsHint">Indent for JS, TS, JSON, CSS, HTML, and Markdown.</p>
+        <fieldset class="modal-fieldset">
+          <legend data-i18n="format.indentLabel">Indent</legend>
+          <label class="modal-radio"><input type="radio" name="format-indent" value="2" checked /> <span data-i18n="format.indent2">2 spaces</span></label>
+          <label class="modal-radio"><input type="radio" name="format-indent" value="4" /> <span data-i18n="format.indent4">4 spaces</span></label>
+          <label class="modal-radio"><input type="radio" name="format-indent" value="tab" /> <span data-i18n="format.indentTab">Tab</span></label>
+        </fieldset>
+        <h3 class="modal-subtitle" data-i18n="format.commandsTitle">External commands</h3>
+        <p class="modal-hint" data-i18n="format.commandsHint">Rust, Go, C, and Python use tools on PATH, or a command you add.</p>
+        <div id="format-command-list" class="format-command-list"></div>
+        <div id="format-command-form" class="format-command-form" hidden>
+          <h3 id="format-command-form-title" class="modal-subtitle" data-i18n="format.addTitle">Add formatter</h3>
+          <p class="modal-hint" data-i18n="format.addHint">Point a language at a local command that reads stdin and writes formatted text to stdout.</p>
+          <label class="modal-field">
+            <span data-i18n="format.languageLabel">Language id</span>
+            <input id="add-formatter-language" type="text" spellcheck="false" autocomplete="off" data-i18n-placeholder="format.languagePlaceholder" />
+          </label>
+          <div id="add-formatter-suggest" class="modal-suggest" hidden></div>
+          <label class="modal-field">
+            <span data-i18n="format.programLabel">Command</span>
+            <input id="add-formatter-program" type="text" spellcheck="false" autocomplete="off" placeholder="rustfmt" />
+          </label>
+          <label class="modal-field">
+            <span data-i18n="format.argsLabel">Arguments</span>
+            <input id="add-formatter-args" type="text" spellcheck="false" autocomplete="off" placeholder="--emit stdout" />
+          </label>
+          <div class="modal-actions">
+            <button type="button" id="format-command-form-cancel" data-i18n="dialog.cancel">Cancel</button>
+            <button type="button" id="format-command-form-save" class="modal-primary" data-i18n="format.save">Save</button>
+          </div>
+        </div>
+        <p id="format-options-error" class="modal-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" id="format-options-add" data-i18n="format.add">Add formatter…</button>
+          <button type="button" id="format-options-cancel" data-i18n="dialog.cancel">Cancel</button>
+          <button type="button" id="format-options-save" class="modal-primary" data-i18n="format.save">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="confirm-dialog" class="modal-backdrop confirm-backdrop" hidden>
+      <div class="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+        <div class="confirm-head">
+          <div id="confirm-icon" class="confirm-icon" aria-hidden="true"></div>
+          <h2 id="confirm-title"></h2>
+        </div>
+        <p id="confirm-message" class="confirm-message"></p>
+        <div id="confirm-actions" class="modal-actions"></div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

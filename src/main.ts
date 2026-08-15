@@ -2,12 +2,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ask, message } from "@tauri-apps/plugin-dialog";
 import * as monaco from "monaco-editor/editor/editor.api.js";
 import editorWorkerUrl from "monaco-editor/editor/editor.worker.js?url";
 import "monaco-editor/min/vs/editor/editor.main.css";
 import { applyDomI18n, listLocales, loadLocale, t } from "./i18n";
 import { bindAddLanguageDialog, openAddLanguageDialog } from "./add-language";
+import { bindConfirmDialog, confirmDialog } from "./confirm";
+import { bindTitlebar, syncTitlebarLocale } from "./titlebar";
+import {
+  formatText,
+  languageHasFormatter,
+  loadFormatterConfig,
+  monacoIndentOptions,
+  normalizeIndent,
+  type FormatIndent,
+  type FormatterCommandInfo,
+} from "./format";
+import { bindFormatDialogs, openFormatOptionsDialog } from "./format-ui";
 import { bindFindWidget, closeFind, openFind, refreshFind, syncFindLocale } from "./find";
 import { addFileIcon, applyToolbarIcons } from "./icons";
 import { bindTooltips, setTooltip } from "./tooltip";
@@ -21,6 +32,7 @@ import {
   wrapButtonIcon,
   type ThemeId,
 } from "./theme";
+import { bindExplorer, type ExplorerApi } from "./explorer";
 import { HexEditor } from "./hex";
 import {
   applyMdSplitRatio,
@@ -71,6 +83,7 @@ type TabState = {
   model: monaco.editor.ITextModel;
   viewState: monaco.editor.ICodeEditorViewState | null;
   dirty: boolean;
+  savedVersionId: number;
   diskStamp: DiskStamp | null;
   ignoredStamp: DiskStamp | null;
   viewMode: ViewMode;
@@ -110,6 +123,9 @@ type AppSettings = {
   locale: string;
   theme: ThemeId;
   mdSplit?: number;
+  explorerOpen?: boolean;
+  explorerWidth?: number;
+  workspaceFolder?: string | null;
 };
 
 const PLAINTEXT = "plaintext";
@@ -127,6 +143,7 @@ const tabBar = document.querySelector<HTMLDivElement>("#tab-bar")!;
 const syntaxButton = document.querySelector<HTMLButtonElement>("#btn-syntax")!;
 const syntaxLabel = document.querySelector<HTMLSpanElement>("#syntax-label")!;
 const syntaxMenu = document.querySelector<HTMLDivElement>("#syntax-menu")!;
+const saveButton = document.querySelector<HTMLButtonElement>("#btn-save")!;
 const saveMenuButton = document.querySelector<HTMLButtonElement>("#btn-save-menu")!;
 const saveMenu = document.querySelector<HTMLDivElement>("#save-menu")!;
 const localeButton = document.querySelector<HTMLButtonElement>("#btn-locale")!;
@@ -142,6 +159,13 @@ const monacoHost = document.querySelector<HTMLDivElement>("#monaco-host")!;
 const hexHost = document.querySelector<HTMLDivElement>("#hex-host")!;
 const hexButton = document.querySelector<HTMLButtonElement>("#btn-hex")!;
 const wrapButton = document.querySelector<HTMLButtonElement>("#btn-wrap")!;
+const pasteButton = document.querySelector<HTMLButtonElement>("#btn-paste")!;
+const copyButton = document.querySelector<HTMLButtonElement>("#btn-copy")!;
+const cutButton = document.querySelector<HTMLButtonElement>("#btn-cut")!;
+const undoButton = document.querySelector<HTMLButtonElement>("#btn-undo")!;
+const redoButton = document.querySelector<HTMLButtonElement>("#btn-redo")!;
+const formatButton = document.querySelector<HTMLButtonElement>("#btn-format")!;
+const formatOptionsButton = document.querySelector<HTMLButtonElement>("#btn-format-options")!;
 const mdHost = document.querySelector<HTMLDivElement>("#md-host")!;
 const mdGutter = document.querySelector<HTMLDivElement>("#md-gutter")!;
 const mdButton = document.querySelector<HTMLButtonElement>("#btn-md")!;
@@ -167,6 +191,9 @@ let currentTheme: ThemeId = "dark";
 let currentLocaleId = "en";
 let uiLocales: { id: string; name: string }[] = [];
 let hexEditor: HexEditor | undefined;
+let explorer: ExplorerApi | undefined;
+let formatIndent: FormatIndent = "2";
+let formatterCommands: FormatterCommandInfo[] = [];
 let mdPreview: MdPreview | undefined;
 let mdPreviewLoading: Promise<MdPreview> | null = null;
 let mdSplitRatio = MD_SPLIT_DEFAULT;
@@ -337,6 +364,76 @@ function syncHexButton() {
   setTooltip(hexButton, t("toolbar.hexTitle"));
   syncWrapButton();
   syncMdPreviewButton();
+  syncFormatButton();
+  syncEditActions();
+}
+
+function syncSaveButton() {
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  saveButton.disabled = !tab?.dirty;
+}
+
+function syncEditActions() {
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  const textReady = !!tab && tab.viewMode !== "hex" && !!editor;
+  const model = tab?.model;
+  const selection = editor?.getSelection();
+  const hasSelection = textReady && !!selection && !selection.isEmpty();
+  pasteButton.disabled = !textReady;
+  copyButton.disabled = !hasSelection;
+  cutButton.disabled = !hasSelection;
+  undoButton.disabled = !textReady || !model?.canUndo();
+  redoButton.disabled = !textReady || !model?.canRedo();
+  const pasteLabel = t("toolbar.pasteTitle");
+  const copyLabel = t("toolbar.copyTitle");
+  const cutLabel = t("toolbar.cutTitle");
+  const undoLabel = t("toolbar.undoTitle");
+  const redoLabel = t("toolbar.redoTitle");
+  setTooltip(pasteButton, pasteLabel);
+  setTooltip(copyButton, copyLabel);
+  setTooltip(cutButton, cutLabel);
+  setTooltip(undoButton, undoLabel);
+  setTooltip(redoButton, redoLabel);
+  pasteButton.setAttribute("aria-label", pasteLabel);
+  copyButton.setAttribute("aria-label", copyLabel);
+  cutButton.setAttribute("aria-label", cutLabel);
+  undoButton.setAttribute("aria-label", undoLabel);
+  redoButton.setAttribute("aria-label", redoLabel);
+}
+
+function triggerEditAction(handlerId: string) {
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  if (!editor || !tab || tab.viewMode === "hex") {
+    return;
+  }
+  editor.focus();
+  editor.trigger("toolbar", handlerId, null);
+}
+
+function markTabClean(tab: TabState) {
+  tab.savedVersionId = tab.model.getAlternativeVersionId();
+  if (tab.dirty) {
+    tab.dirty = false;
+    renderTabs();
+  }
+}
+
+function forceTabDirty(tab: TabState) {
+  tab.savedVersionId = -1;
+  if (!tab.dirty) {
+    tab.dirty = true;
+    renderTabs();
+  }
+}
+
+function syncTabDirtyFromModel(tab: TabState) {
+  const dirty = tab.model.getAlternativeVersionId() !== tab.savedVersionId;
+  if (tab.dirty === dirty) {
+    return;
+  }
+  tab.dirty = dirty;
+  renderTabs();
+  updateStatusForActive();
 }
 
 function syncWrapButton() {
@@ -509,7 +606,7 @@ async function loadMoreForTab(tab: TabState) {
       hexEditor?.setBytes(tab.bytes, Math.max(tab.diskSize, tab.bytes.length));
     } else {
       const text = await decodeBytes(tab.bytes, tab.encoding);
-      await applyModelText(tab, text);
+      await applyModelText(tab, text, "clean");
     }
     updateStatusBar();
   } catch (err) {
@@ -609,10 +706,7 @@ async function reloadTabFromDisk(tab: TabState) {
     tab.bytesStale = false;
     tab.textStale = false;
   } catch {
-    if (!tab.dirty) {
-      tab.dirty = true;
-      renderTabs();
-    }
+    forceTabDirty(tab);
     console.warn(t("status.fileMissing", { name: tab.title }));
     return;
   }
@@ -624,7 +718,7 @@ async function reloadTabFromDisk(tab: TabState) {
     if (tab.model.getValue() !== content) {
       tab.model.setValue(content);
     }
-    tab.dirty = false;
+    markTabClean(tab);
     tab.ignoredStamp = null;
   } finally {
     applyingExternal = false;
@@ -672,10 +766,7 @@ async function handleExternalChange(path: string) {
     }
 
     if (!stat) {
-      if (!tab.dirty) {
-        tab.dirty = true;
-        renderTabs();
-      }
+      forceTabDirty(tab);
       console.warn(t("status.fileMissing", { name: tab.title }));
       continue;
     }
@@ -688,12 +779,18 @@ async function handleExternalChange(path: string) {
     fileChangePromptOpen = true;
     let reload = false;
     try {
-      reload = await ask(t("dialog.fileChanged", { name: tab.title }), {
-        title: t("dialog.fileChangedTitle"),
-        kind: "warning",
-        okLabel: t("dialog.loadFromDisk"),
-        cancelLabel: t("dialog.keepEdits"),
-      });
+      reload =
+        (await confirmDialog({
+          title: t("dialog.fileChangedTitle"),
+          message: t("dialog.fileChanged", { name: tab.title }),
+          kind: "warning",
+          buttons: [
+            { id: "reload", label: t("dialog.loadFromDisk"), role: "primary" },
+            { id: "keep", label: t("dialog.keepEdits") },
+          ],
+          defaultId: "reload",
+          cancelId: "keep",
+        })) === "reload";
     } finally {
       fileChangePromptOpen = false;
       windowFocused = await getCurrentWindow().isFocused();
@@ -829,8 +926,6 @@ function fillLanguageMenu() {
     item.textContent = languageLabel(id);
     syntaxMenu.appendChild(item);
   }
-  const footer = document.createElement("div");
-  footer.className = "popover-footer";
   const sep = document.createElement("div");
   sep.className = "popover-sep";
   sep.setAttribute("role", "separator");
@@ -840,8 +935,81 @@ function fillLanguageMenu() {
   add.role = "menuitem";
   add.dataset.action = "add-language";
   add.textContent = t("lang.add");
-  footer.append(sep, add);
-  syntaxMenu.appendChild(footer);
+  syntaxMenu.append(sep, add);
+}
+
+function canFormatActive() {
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  if (!tab || tab.viewMode === "hex") {
+    return false;
+  }
+  return languageHasFormatter(tab.languageId, formatterCommands);
+}
+
+function syncFormatButton() {
+  const enabled = canFormatActive();
+  formatButton.disabled = !enabled;
+  setTooltip(formatButton, t("toolbar.formatTitle"));
+  setTooltip(formatOptionsButton, t("toolbar.formatOptionsTitle"));
+}
+
+async function refreshFormatterCommands() {
+  try {
+    const formatConfig = await loadFormatterConfig();
+    formatterCommands = formatConfig.commands;
+    syncFormatButton();
+  } catch (err) {
+    console.warn("failed to load formatter config", err);
+  }
+}
+
+function applyFormatIndent(indent: FormatIndent) {
+  formatIndent = indent;
+  editor?.updateOptions(monacoIndentOptions(indent));
+}
+
+async function formatActive() {
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  if (!tab || !editor || tab.viewMode === "hex") {
+    return;
+  }
+  if (!canFormatActive()) {
+    await confirmDialog({
+      title: t("format.document"),
+      message: t("format.unsupported", { language: languageLabel(tab.languageId) }),
+      kind: "info",
+      buttons: [{ id: "ok", label: t("dialog.ok"), role: "primary" }],
+      defaultId: "ok",
+      cancelId: "ok",
+    });
+    return;
+  }
+  try {
+    const current = tab.model.getValue();
+    const formatted = await formatText(tab.languageId, current, { indent: formatIndent });
+    if (formatted === current) {
+      return;
+    }
+    editor.executeEdits("format", [
+      {
+        range: tab.model.getFullModelRange(),
+        text: formatted,
+      },
+    ]);
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    const text = /no formatter/i.test(raw)
+      ? t("format.unsupported", { language: languageLabel(tab.languageId) })
+      : t("format.failed", { error: raw.replace(/^(Error:\s*)+/i, "") });
+    await confirmDialog({
+      title: t("format.document"),
+      message: text,
+      kind: "error",
+      buttons: [{ id: "ok", label: t("dialog.ok"), role: "primary" }],
+      defaultId: "ok",
+      cancelId: "ok",
+    });
+  }
 }
 
 function fillLocaleMenu(locales: { id: string; name: string }[], selectedId: string) {
@@ -937,7 +1105,11 @@ function setEncodingMenuOpen(open: boolean) {
   statusEncodingEl.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
-async function applyModelText(tab: TabState, content: string) {
+async function applyModelText(
+  tab: TabState,
+  content: string,
+  version: "clean" | "preserve" | "dirty" = "preserve",
+) {
   const viewState =
     tab.id === activeTabId ? editor?.saveViewState() ?? tab.viewState : tab.viewState;
   applyingExternal = true;
@@ -947,6 +1119,15 @@ async function applyModelText(tab: TabState, content: string) {
     }
   } finally {
     applyingExternal = false;
+  }
+  if (version === "clean") {
+    markTabClean(tab);
+  } else if (version === "dirty") {
+    forceTabDirty(tab);
+  } else if (tab.dirty) {
+    tab.savedVersionId = -1;
+  } else {
+    tab.savedVersionId = tab.model.getAlternativeVersionId();
   }
   if (viewState) {
     if (tab.id === activeTabId && editor) {
@@ -1027,11 +1208,7 @@ async function convertTabEncoding(tab: TabState, encoding: EncodingId) {
     tab.bytesStale = false;
     tab.textStale = false;
     const text = await decodeBytes(tab.bytes, encoding);
-    await applyModelText(tab, text);
-    if (!tab.dirty) {
-      tab.dirty = true;
-      renderTabs();
-    }
+    await applyModelText(tab, text, "dirty");
     if (tab.viewMode === "hex") {
       await showTabView(tab);
     }
@@ -1149,6 +1326,7 @@ function renderTabs() {
   add.appendChild(icon);
   add.addEventListener("click", () => createTab());
   tabBar.appendChild(add);
+  syncSaveButton();
 }
 
 function syncLanguageSelect() {
@@ -1324,6 +1502,7 @@ function activateTab(id: string) {
   }
   renderTabs();
   syncLanguageSelect();
+  explorer?.revealPath(tab.path);
   void showTabView(tab).then(() => refreshFind({ reveal: false }));
   schedulePersistSession();
 }
@@ -1375,6 +1554,7 @@ function createTab(options?: {
     model,
     viewState: options?.viewState ?? null,
     dirty: options?.dirty ?? false,
+    savedVersionId: 0,
     diskStamp: null,
     ignoredStamp: null,
     viewMode: options?.viewMode === "hex" ? "hex" : "text",
@@ -1387,19 +1567,24 @@ function createTab(options?: {
     mdPreview: options?.mdPreview === true && isMarkdownLanguage(languageId),
   };
 
+  if (tab.dirty) {
+    tab.savedVersionId = -1;
+  } else {
+    tab.savedVersionId = tab.model.getAlternativeVersionId();
+  }
+
   model.onDidChangeContent(() => {
     if (restoringSession || applyingExternal) {
       return;
     }
-    if (!tab.dirty) {
-      tab.dirty = true;
-      renderTabs();
-      updateStatusForActive();
-    }
+    syncTabDirtyFromModel(tab);
     tab.bytesStale = true;
     tab.textStale = false;
     refreshByteMarkDecorations(tab);
     updateStatusBar();
+    if (tab.id === activeTabId) {
+      syncEditActions();
+    }
     refreshFind({ reveal: false });
     schedulePersistSession();
     if (tab.id === activeTabId && tabShowsMdPreview(tab)) {
@@ -1425,20 +1610,20 @@ async function closeTab(id: string) {
   }
 
   if (tab.path && tab.dirty) {
-    const saveLabel = t("dialog.save");
-    const discardLabel = t("dialog.discard");
-    const cancelLabel = t("dialog.cancel");
     fileChangePromptOpen = true;
     let result: string;
     try {
-      result = await message(t("dialog.closeDirty", { name: tab.title }), {
+      result = await confirmDialog({
         title: t("dialog.closeDirtyTitle"),
+        message: t("dialog.closeDirty", { name: tab.title }),
         kind: "warning",
-        buttons: {
-          yes: saveLabel,
-          no: discardLabel,
-          cancel: cancelLabel,
-        },
+        buttons: [
+          { id: "save", label: t("dialog.save"), role: "primary" },
+          { id: "discard", label: t("dialog.discard"), role: "danger" },
+          { id: "cancel", label: t("dialog.cancel") },
+        ],
+        defaultId: "save",
+        cancelId: "cancel",
       });
     } finally {
       fileChangePromptOpen = false;
@@ -1447,10 +1632,10 @@ async function closeTab(id: string) {
         void syncWatchedFiles();
       }
     }
-    if (result === "Cancel" || result === cancelLabel) {
+    if (result === "cancel") {
       return;
     }
-    if (result === "Yes" || result === saveLabel) {
+    if (result === "save") {
       const saved = await saveTab(tab);
       if (!saved) {
         return;
@@ -1480,6 +1665,13 @@ async function closeTab(id: string) {
 }
 
 async function openPath(path: string) {
+  const existing = [...tabs.values()].find(
+    (tab) => tab.path && pathKey(tab.path) === pathKey(path),
+  );
+  if (existing) {
+    activateTab(existing.id);
+    return;
+  }
   const file = await loadFilePrefix(path);
   const languageId =
     (await invoke<string | null>("language_id_for_path", { path })) ?? PLAINTEXT;
@@ -1597,7 +1789,7 @@ async function saveTab(tab: TabState, options?: { saveAs?: boolean }): Promise<b
   tab.diskLoaded = tab.bytes.length;
   tab.diskSize = tab.bytes.length + tailLen;
   tab.bytesStale = false;
-  tab.dirty = false;
+  markTabClean(tab);
   tab.ignoredStamp = null;
   await stampTabFromDisk(tab);
   renderTabs();
@@ -1637,6 +1829,7 @@ function setActiveLanguage(languageId: string) {
   layoutEditor();
   syncLanguageSelect();
   syncMdPreviewButton();
+  syncFormatButton();
   updateStatusForActive();
   schedulePersistSession();
 }
@@ -1755,9 +1948,10 @@ async function bindSessionFlush() {
 }
 
 function bindUi() {
+  bindConfirmDialog();
   document.querySelector("#btn-new")!.addEventListener("click", () => createTab());
   document.querySelector("#btn-open")!.addEventListener("click", () => void openFile());
-  document.querySelector("#btn-save")!.addEventListener("click", () => {
+  saveButton.addEventListener("click", () => {
     setSaveMenuOpen(false);
     void saveActive();
   });
@@ -1780,7 +1974,24 @@ function bindUi() {
   });
   hexButton.addEventListener("click", () => void toggleHexView());
   wrapButton.innerHTML = wrapButtonIcon();
+  pasteButton.addEventListener("click", () => {
+    triggerEditAction("editor.action.clipboardPasteAction");
+  });
+  copyButton.addEventListener("click", () => {
+    triggerEditAction("editor.action.clipboardCopyAction");
+  });
+  cutButton.addEventListener("click", () => {
+    triggerEditAction("editor.action.clipboardCutAction");
+  });
+  undoButton.addEventListener("click", () => {
+    triggerEditAction("undo");
+  });
+  redoButton.addEventListener("click", () => {
+    triggerEditAction("redo");
+  });
   wrapButton.addEventListener("click", () => toggleWordWrap());
+  formatButton.addEventListener("click", () => void formatActive());
+  formatOptionsButton.addEventListener("click", () => void openFormatOptionsDialog());
   mdButton.addEventListener("click", () => void toggleMdPreview());
   syntaxButton.addEventListener("click", (ev) => {
     ev.stopPropagation();
@@ -1788,8 +1999,8 @@ function bindUi() {
   });
   syntaxMenu.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    const add = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-action='add-language']");
-    if (add) {
+    const action = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-action]")?.dataset.action;
+    if (action === "add-language") {
       setSyntaxMenuOpen(false);
       void openAddLanguageDialog();
       return;
@@ -1832,7 +2043,10 @@ function bindUi() {
       syncLocaleButton();
       fillHexLabels();
       syncHexButton();
+      syncEditActions();
       syncFindLocale();
+      explorer?.syncLocale();
+      syncTitlebarLocale();
     })();
   });
   statusEolEl.addEventListener("click", (ev) => {
@@ -1910,6 +2124,25 @@ function bindUi() {
     });
   });
   try {
+    bindFormatDialogs({
+      getLanguageIds: () => {
+        const ids = new Set(["c", "cpp", "go", "python", "rust", ...plugins.map((plugin) => plugin.id)]);
+        return [...ids].sort();
+      },
+      languageLabel,
+      currentLanguageId: () => {
+        const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+        return tab?.languageId ?? PLAINTEXT;
+      },
+      onIndentChange: applyFormatIndent,
+      onFormatterChange: () => {
+        void refreshFormatterCommands();
+      },
+    });
+  } catch (err) {
+    console.warn("failed to bind format dialogs", err);
+  }
+  try {
     bindAddLanguageDialog({
       getMonaco: () => monaco,
       getPlugins: () => plugins,
@@ -1941,6 +2174,15 @@ function bindUi() {
       } else {
         void saveActive();
       }
+    } else if (key === "b") {
+      ev.preventDefault();
+      explorer?.toggle();
+    }
+  });
+  window.addEventListener("keydown", (ev) => {
+    if (ev.altKey && ev.shiftKey && ev.key.toLowerCase() === "f" && !ev.ctrlKey && !ev.metaKey) {
+      ev.preventDefault();
+      void formatActive();
     }
   });
 }
@@ -1966,6 +2208,7 @@ async function loadAndRegisterGrammars() {
 
 async function main() {
   applyToolbarIcons();
+  const titlebarPromise = bindTitlebar();
   const settingsPromise = invoke<AppSettings>("get_settings");
   const localesPromise = listLocales();
   const pluginsPromise = invoke<LanguagePluginDto[]>("list_language_plugins");
@@ -1977,9 +2220,27 @@ async function main() {
   mdSplitRatio = clampMdSplit(settings.mdSplit ?? MD_SPLIT_DEFAULT);
   applyTheme(settings.theme === "light" ? "light" : "dark");
   applyDomI18n();
+  await titlebarPromise;
+  syncTitlebarLocale();
   bindTooltips();
   syncLocaleButton();
   wrapButton.innerHTML = wrapButtonIcon();
+  explorer = bindExplorer({
+    onOpenFile: (path) => {
+      void openPath(path);
+    },
+    onLayout: layoutEditor,
+    onPersist: (patch) => {
+      void invoke("update_settings", patch).catch((err) => {
+        console.warn("failed to save explorer settings", err);
+      });
+    },
+  });
+  void explorer.applyInitial(
+    settings.explorerOpen !== false,
+    settings.explorerWidth ?? 240,
+    settings.workspaceFolder ?? null,
+  );
   applyMdSplitRatio(editorHost, mdSplitRatio);
   bindMdGutter({
     host: editorHost,
@@ -2010,6 +2271,14 @@ async function main() {
   defineEditorThemes(monaco);
   fillLanguageMenu();
   syncLanguageSelect();
+  try {
+    const formatConfig = await loadFormatterConfig();
+    formatIndent = normalizeIndent(formatConfig.indent);
+    formatterCommands = formatConfig.commands;
+    syncFormatButton();
+  } catch (err) {
+    console.warn("failed to load formatter config", err);
+  }
 
   editor = monaco.editor.create(monacoHost, {
     value: "",
@@ -2020,6 +2289,7 @@ async function main() {
     fontFamily: "Cascadia Code, Consolas, 'Courier New', monospace",
     minimap: { enabled: false },
     wordWrap: "off",
+    ...monacoIndentOptions(formatIndent),
     find: {
       seedSearchStringFromSelection: "never",
       addExtraSpaceOnTop: false,
@@ -2043,10 +2313,7 @@ async function main() {
         tab.bytes = hexEditor?.getBytes() ?? tab.bytes;
         tab.textStale = true;
         tab.bytesStale = false;
-        if (!tab.dirty) {
-          tab.dirty = true;
-          renderTabs();
-        }
+        forceTabDirty(tab);
         schedulePersistSession();
       }
       updateStatusBar();
@@ -2061,6 +2328,7 @@ async function main() {
   fillHexLabels();
   layoutEditor();
   editor.onDidChangeCursorPosition(() => updateStatusBar());
+  editor.onDidChangeCursorSelection(() => syncEditActions());
   editor.onDidScrollChange(() => {
     syncMdScrollFromEditor?.();
     const tab = activeTabId ? tabs.get(activeTabId) : undefined;
