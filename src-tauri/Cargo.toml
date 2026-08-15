@@ -2,7 +2,7 @@
 name = "lapeditor"
 version = "0.1.0"
 description = "Lightweight notepad with Monaco + TextMate language plugins"
-authors = ["pgmsoul"]
+authors = ["jsuserapp"]
 license = "MIT"
 edition = "2021"
 

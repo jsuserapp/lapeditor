@@ -14,18 +14,18 @@
   ·
   <a href="https://github.com/jsuserapp/lapeditor/releases/latest">Download</a>
   ·
-  <a href="docs/download.md">Binary downloads</a>
+  <a href="LICENSE">MIT License</a>
 </p>
 
 ## Download
 
-Installers are published on the [GitHub Releases](https://github.com/jsuserapp/lapeditor/releases) page — the same pattern used by most open-source desktop apps.
+Installers are on [GitHub Releases](https://github.com/jsuserapp/lapeditor/releases/latest).
 
-- **[Latest release](https://github.com/jsuserapp/lapeditor/releases/latest)** — recommended
-- [All versions](https://github.com/jsuserapp/lapeditor/releases)
-- [Which file should I pick?](docs/download.md)
-
-Windows 10 / 11: download the `.exe` NSIS installer. macOS and Linux builds appear on the same page when a release includes them.
+| Platform | File |
+| --- | --- |
+| Windows 10 / 11 (x64) | `Lapeditor_*_x64-setup.exe` |
+| macOS | `.dmg` or `.app.tar.gz` |
+| Linux | `.AppImage` or `.deb` |
 
 ## Features
 
@@ -45,95 +45,20 @@ Windows 10 / 11: download the `.exe` NSIS installer. macOS and Linux builds appe
 - Portable layout: settings and plugins live next to the executable
 - Windows custom title bar (drag the toolbar; minimize / maximize / close)
 
-## Requirements
+## Build
 
-| Tool | Version |
-| --- | --- |
-| Node.js | 20 or newer |
-| pnpm | 11.8.0 (see `packageManager` in `package.json`) |
-| Rust | stable toolchain (`rustup`) |
-| Windows | WebView2 (preinstalled on recent Windows 10/11), plus [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) |
-
-On Linux you also need WebKitGTK development packages (see the [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/)).
-
-## Debug (development)
+Requires Node.js 20+, [pnpm](https://pnpm.io/) 11.8, a stable Rust toolchain, and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
 
 ```bash
 pnpm install
-pnpm dev
-```
-
-`pnpm dev` starts Vite and the Tauri window. It passes `--no-watch` to the Tauri CLI:
-
-- **Frontend** (`src/`, `index.html`, `locale/`, `src/styles.css`): Vite hot-reloads.
-- **Rust** (`src-tauri/`): no auto-rebuild. Stop the process and run `pnpm dev` again.
-
-Useful checks:
-
-```bash
-# TypeScript
-npx tsc --noEmit
-
-# Rust
-cd src-tauri
-cargo check
-```
-
-In a debug window you can open WebView DevTools (right-click → Inspect, or `Ctrl+Shift+I` on Windows) to debug the frontend.
-
-## Compile (release)
-
-```bash
-pnpm install
-pnpm tauri build
-```
-
-This type-checks the frontend, runs Vite, then builds a release binary and installers.
-
-Typical Windows output:
-
-```
-src-tauri/target/release/lapeditor.exe
-src-tauri/target/release/bundle/nsis/          # installer .exe
-src-tauri/target/release/bundle/msi/           # MSI, if produced
-```
-
-Do not commit those binaries. Upload them as a GitHub Release — see [docs/publish.md](docs/publish.md).
-
-Short version: push `main` (including `.github/workflows/release.yml`), then:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-GitHub Actions builds each platform and attaches the installers. You can also build locally and upload the files by hand (same doc).
-
-## Portable layout
-
-Runtime files stay beside the executable (repo root during `pnpm dev`):
-
-```
-Lapeditor.exe
-config/
-  settings.json      # zoom, theme, locale, explorer
-  window.json        # position / size
-  formatters.json    # format indent and external commands
-plugin/
-  languages/         # TextMate language plugins
-data/
-  session/           # open tabs
-  webview/           # WebView2 cache (Windows)
+pnpm dev          # development
+pnpm tauri build  # release installers
 ```
 
 ## Language plugins
 
-See [`plugin/languages/README.md`](plugin/languages/README.md).
-
-Each language is a folder with `language.json` and a TextMate grammar. Drop it under `plugin/languages/` and restart. Bundled samples: javascript, python, json, rust, markdown.
+See [`plugin/languages/README.md`](plugin/languages/README.md). Each language is a folder with `language.json` and a TextMate grammar. Drop it under `plugin/languages/` and restart.
 
 ## License
 
-Lapeditor is released under the [MIT License](LICENSE).
-
-It uses other open-source components (Tauri, Monaco Editor, vscode-textmate, and more). Those projects keep their own licenses; see [THIRD_PARTY.md](THIRD_PARTY.md).
+[MIT](LICENSE). Third-party components keep their own licenses; see [THIRD_PARTY.md](THIRD_PARTY.md).

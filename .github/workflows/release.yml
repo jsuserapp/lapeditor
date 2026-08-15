@@ -57,8 +57,6 @@ jobs:
           releaseName: "Lapeditor ${{ github.ref_name }}"
           releaseBody: |
             Download the installer for your platform from the assets below.
-
-            See [docs/download.md](https://github.com/jsuserapp/lapeditor/blob/main/docs/download.md) for which file to pick.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
