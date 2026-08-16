@@ -872,8 +872,7 @@ async function reloadTabFromDisk(tab: TabState) {
     tab.textStale = false;
     tab.hexHistory = emptyHexHistory();
   } catch {
-    forceTabDirty(tab);
-    console.warn(t("status.fileMissing", { name: tab.title }));
+    await handleMissingOpenFiles([tab]);
     return;
   }
 
@@ -923,17 +922,16 @@ async function handleExternalChange(path: string) {
     stat = null;
   }
 
-  for (const tab of matches) {
-    if (stat && stampsEqual(stat, tab.diskStamp)) {
-      continue;
-    }
-    if (stat && stampsEqual(stat, tab.ignoredStamp)) {
-      continue;
-    }
+  if (!stat) {
+    await handleMissingOpenFiles(matches);
+    return;
+  }
 
-    if (!stat) {
-      forceTabDirty(tab);
-      console.warn(t("status.fileMissing", { name: tab.title }));
+  for (const tab of matches) {
+    if (stampsEqual(stat, tab.diskStamp)) {
+      continue;
+    }
+    if (stampsEqual(stat, tab.ignoredStamp)) {
       continue;
     }
 
@@ -974,6 +972,61 @@ async function handleExternalChange(path: string) {
       tab.ignoredStamp = stat;
     }
   }
+}
+
+async function handleMissingOpenFiles(matches: TabState[]) {
+  const stillOpen = matches.filter((tab) => tabs.has(tab.id) && tab.path);
+  if (!stillOpen.length) {
+    return;
+  }
+  // Already kept as unsaved after a previous missing-file prompt.
+  if (stillOpen.every((tab) => tab.dirty && !tab.diskStamp)) {
+    return;
+  }
+
+  const name = stillOpen[0].title;
+  fileChangePromptOpen = true;
+  let keep = false;
+  try {
+    keep =
+      (await confirmDialog({
+        title: t("dialog.fileMissingTitle"),
+        message: t("dialog.fileMissing", { name }),
+        kind: "warning",
+        buttons: [
+          { id: "keep", label: t("dialog.keepContent"), role: "primary" },
+          { id: "close", label: t("dialog.discard"), role: "danger" },
+        ],
+        defaultId: "keep",
+        cancelId: "close",
+      })) === "keep";
+  } finally {
+    fileChangePromptOpen = false;
+    windowFocused = await getCurrentWindow().isFocused();
+    if (windowFocused) {
+      void syncWatchedFiles();
+    } else {
+      void invoke("watch_text_files", { paths: [] }).catch((err) => {
+        console.warn("failed to pause file watch", err);
+      });
+    }
+  }
+
+  if (keep) {
+    for (const tab of stillOpen) {
+      if (!tabs.has(tab.id)) {
+        continue;
+      }
+      forceTabDirty(tab);
+      tab.diskStamp = null;
+      tab.ignoredStamp = null;
+    }
+    updateStatusForActive();
+    schedulePersistSession();
+    return;
+  }
+
+  disposeTabs(stillOpen.map((tab) => tab.id));
 }
 
 function enqueueExternalChange(path: string) {
@@ -2059,45 +2112,44 @@ function pathIsRemoved(tabPath: string, removed: string, isDir: boolean) {
 }
 
 function forgetDeletedExplorerPath(removed: string, isDir: boolean) {
-  const affected = [...tabs.values()].filter((tab) => tab.path && pathIsRemoved(tab.path, removed, isDir));
-  for (const tab of affected) {
-    if (tab.dirty) {
-      tab.path = null;
-      tab.untitledNumber = nextUntitledNumber();
-      tab.title = t("tab.untitled", { n: tab.untitledNumber });
-      tab.diskStamp = null;
-      tab.ignoredStamp = null;
-    } else {
-      disposeTab(tab.id);
-    }
-  }
-  if (affected.length) {
-    renderTabs();
-    updateStatusForActive();
-    schedulePersistSession();
-    scheduleSyncWatchedFiles();
-  }
+  const affectedIds = [...tabs.values()]
+    .filter((tab) => tab.path && pathIsRemoved(tab.path, removed, isDir))
+    .map((tab) => tab.id);
+  disposeTabs(affectedIds);
 }
 
-function disposeTab(id: string) {
-  const tab = tabs.get(id);
-  if (!tab) {
+function disposeTabs(ids: string[]) {
+  const unique = [...new Set(ids)].filter((id) => tabs.has(id));
+  if (!unique.length) {
     return;
   }
-  tab.model.dispose();
-  tabs.delete(id);
-  if (activeTabId === id) {
+  const closingActive = activeTabId != null && unique.includes(activeTabId);
+  for (const id of unique) {
+    const tab = tabs.get(id);
+    if (!tab) {
+      continue;
+    }
+    tab.model.dispose();
+    tabs.delete(id);
+  }
+  if (closingActive || (activeTabId != null && !tabs.has(activeTabId))) {
     activeTabId = null;
     const next = tabs.keys().next().value as string | undefined;
     if (next) {
       activateTab(next);
     } else {
       editor?.setModel(null);
-      renderTabs();
       syncLanguageSelect();
-      updateStatusForActive();
     }
   }
+  renderTabs();
+  updateStatusForActive();
+  schedulePersistSession();
+  scheduleSyncWatchedFiles();
+}
+
+function disposeTab(id: string) {
+  disposeTabs([id]);
 }
 
 async function closeTab(id: string) {

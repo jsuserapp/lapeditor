@@ -248,12 +248,6 @@ export function bindAddLanguageDialog(options: AddLanguageHost) {
   host = options;
   cancelBtn().addEventListener("click", () => closeAddLanguageDialog());
   confirmBtn().addEventListener("click", () => void confirmAdd());
-  dialog().addEventListener("click", (ev) => {
-    if (ev.target === dialog()) {
-      closeAddLanguageDialog();
-    }
-  });
-  dialog().querySelector(".modal")?.addEventListener("click", (ev) => ev.stopPropagation());
   input().addEventListener("input", onQueryChange);
   input().addEventListener("focus", () => renderSuggest(input().value));
   input().addEventListener("keydown", (ev) => {

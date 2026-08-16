@@ -2438,20 +2438,28 @@ body.file-dropping #app {
   background: var(--btn-hover);
 }
 
+.modal-actions button:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text) 55%, var(--border));
+}
+
 .modal-actions .modal-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: transparent;
 }
 
 .modal-actions .modal-primary:hover {
-  background: var(--accent-hover);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.modal-actions .modal-primary:focus {
+  border-color: var(--accent);
 }
 
 .modal-actions .modal-primary:disabled {
   opacity: 0.45;
   cursor: default;
-  background: var(--accent);
 }
 
 .modal-actions .modal-danger {
@@ -2461,6 +2469,10 @@ body.file-dropping #app {
 
 .modal-actions .modal-danger:hover {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.modal-actions .modal-danger:focus {
+  border-color: var(--danger);
 }
 
 .confirm-backdrop {
@@ -2485,7 +2497,15 @@ body.file-dropping #app {
 .confirm-icon {
   flex: 0 0 auto;
   display: flex;
+  align-items: center;
   color: var(--tab-active-title);
+}
+
+.confirm-icon img {
+  display: block;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
 }
 
 .confirm-backdrop[data-kind="warning"] .confirm-icon {

@@ -249,12 +249,6 @@ export function bindFormatDialogs(options: FormatUiHost) {
   dialog.querySelector("#format-command-form-save")?.addEventListener("click", () => {
     void saveCommand();
   });
-  dialog.addEventListener("click", (ev) => {
-    if (ev.target === dialog) {
-      closeDialog();
-    }
-  });
-  dialog.querySelector(".modal")?.addEventListener("click", (ev) => ev.stopPropagation());
   languageInput().addEventListener("input", (ev) => {
     renderLanguageSuggest((ev.target as HTMLInputElement).value);
   });

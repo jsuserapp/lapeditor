@@ -118,12 +118,6 @@ export function bindNameDialog() {
     return;
   }
   bound = true;
-  root().addEventListener("click", (ev) => {
-    if (ev.target === root() && pending && !busy) {
-      finish(false);
-    }
-  });
-  root().querySelector(".modal")?.addEventListener("click", (ev) => ev.stopPropagation());
   cancelBtn().addEventListener("click", () => {
     if (!busy) {
       finish(false);

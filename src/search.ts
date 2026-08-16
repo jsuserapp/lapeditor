@@ -474,11 +474,6 @@ export function bindSearch(host: SearchHost): SearchApi {
       addCustomDir();
     }
   });
-  dialog.addEventListener("click", (ev) => {
-    if (ev.target === dialog) {
-      setDialogOpen(false);
-    }
-  });
   window.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape" && !dialog.hidden) {
       ev.preventDefault();
