@@ -4,8 +4,32 @@ export const HEX_ROW_BYTES = 16;
 const ROW_HEIGHT = 22;
 const OVERSCAN = 12;
 const MAX_SPACER = 20_000_000;
+const MAX_HISTORY = 200;
 
 export type HexChangeKind = "edit" | "select" | "scroll";
+
+export type HexCaret = {
+  offset: number;
+  nibble: number;
+  selEnd: number;
+};
+
+export type HexPatch = {
+  offset: number;
+  before: Uint8Array;
+  after: Uint8Array;
+  caretBefore: HexCaret;
+  caretAfter: HexCaret;
+};
+
+export type HexHistory = {
+  undo: HexPatch[];
+  redo: HexPatch[];
+};
+
+export function emptyHexHistory(): HexHistory {
+  return { undo: [], redo: [] };
+}
 
 export type HexEditorOptions = {
   onChange?: (kind: HexChangeKind) => void;
@@ -26,6 +50,8 @@ export class HexEditor {
   private dragging = false;
   private firstRow = 0;
   private visibleRows = 0;
+  private undoStack: HexPatch[] = [];
+  private redoStack: HexPatch[] = [];
   private options: HexEditorOptions;
 
   constructor(host: HTMLDivElement, options: HexEditorOptions = {}) {
@@ -68,6 +94,8 @@ export class HexEditor {
     const prev = this.offset;
     this.bytes = bytes;
     this.totalSize = Math.max(totalSize, bytes.length);
+    this.undoStack = [];
+    this.redoStack = [];
     if (!keepCaret) {
       this.offset = 0;
       this.nibble = 0;
@@ -77,6 +105,31 @@ export class HexEditor {
       this.selEnd = this.offset;
     }
     this.render(true);
+  }
+
+  getHistory(): HexHistory {
+    return { undo: this.undoStack, redo: this.redoStack };
+  }
+
+  setHistory(history: HexHistory) {
+    this.undoStack = history.undo;
+    this.redoStack = history.redo;
+  }
+
+  canUndo(): boolean {
+    return this.undoStack.length > 0;
+  }
+
+  canRedo(): boolean {
+    return this.redoStack.length > 0;
+  }
+
+  undo(): boolean {
+    return this.applyHistory("undo");
+  }
+
+  redo(): boolean {
+    return this.applyHistory("redo");
   }
 
   getBytes(): Uint8Array {
@@ -303,53 +356,136 @@ export class HexEditor {
     }
   }
 
+  private snapshotCaret(): HexCaret {
+    return { offset: this.offset, nibble: this.nibble, selEnd: this.selEnd };
+  }
+
+  private restoreCaret(caret: HexCaret) {
+    this.offset = this.clampOffset(caret.offset);
+    this.nibble = caret.nibble === 1 ? 1 : 0;
+    this.selEnd = this.clampOffset(caret.selEnd);
+  }
+
+  private writeSlice(offset: number, data: Uint8Array) {
+    if (!data.length || offset < 0 || offset >= this.bytes.length) {
+      return;
+    }
+    const next = this.bytes.slice();
+    const end = Math.min(offset + data.length, next.length);
+    next.set(data.subarray(0, end - offset), offset);
+    this.bytes = next;
+  }
+
+  private pushPatch(patch: HexPatch, coalesce: boolean) {
+    const last = this.undoStack[this.undoStack.length - 1];
+    if (
+      coalesce &&
+      last &&
+      last.offset === patch.offset &&
+      last.after.length === patch.after.length
+    ) {
+      last.after = patch.after;
+      last.caretAfter = patch.caretAfter;
+    } else {
+      this.undoStack.push(patch);
+      if (this.undoStack.length > MAX_HISTORY) {
+        this.undoStack.shift();
+      }
+    }
+    this.redoStack = [];
+  }
+
+  private applyHistory(direction: "undo" | "redo"): boolean {
+    const from = direction === "undo" ? this.undoStack : this.redoStack;
+    const to = direction === "undo" ? this.redoStack : this.undoStack;
+    const patch = from.pop();
+    if (!patch) {
+      return false;
+    }
+    this.writeSlice(patch.offset, direction === "undo" ? patch.before : patch.after);
+    this.restoreCaret(direction === "undo" ? patch.caretBefore : patch.caretAfter);
+    to.push(patch);
+    this.ensureVisible();
+    this.render(true);
+    this.options.onChange?.("edit");
+    return true;
+  }
+
+  private commitEdit(offset: number, before: Uint8Array, caretBefore: HexCaret, coalesce = false) {
+    this.pushPatch(
+      {
+        offset,
+        before,
+        after: this.bytes.slice(offset, offset + before.length),
+        caretBefore,
+        caretAfter: this.snapshotCaret(),
+      },
+      coalesce,
+    );
+    this.render(true);
+    this.options.onChange?.("edit");
+  }
+
   private writeNibble(nibbleValue: number) {
     if (this.bytes.length === 0) {
       return;
     }
+    const caretBefore = this.snapshotCaret();
+    const startOffset = this.offset;
+    const startNibble = this.nibble;
+    const before = this.bytes.slice(startOffset, startOffset + 1);
     const next = this.bytes.slice();
-    const cur = next[this.offset];
+    const cur = next[startOffset];
     if (this.nibble === 0) {
-      next[this.offset] = (nibbleValue << 4) | (cur & 0x0f);
+      next[startOffset] = (nibbleValue << 4) | (cur & 0x0f);
       this.nibble = 1;
     } else {
-      next[this.offset] = (cur & 0xf0) | nibbleValue;
+      next[startOffset] = (cur & 0xf0) | nibbleValue;
       this.nibble = 0;
       this.offset = this.clampOffset(this.offset + 1);
       this.selEnd = this.offset;
     }
     this.bytes = next;
-    this.render(true);
-    this.options.onChange?.("edit");
+    this.commitEdit(startOffset, before, caretBefore, startNibble === 1);
   }
 
   private writeUtf8Char(ch: string) {
     const encoded = new TextEncoder().encode(ch);
-    if (!encoded.length || this.offset + encoded.length > this.bytes.length) {
-      if (!encoded.length) {
-        return;
-      }
-      const room = this.bytes.length - this.offset;
-      if (room <= 0) {
-        return;
-      }
-      const next = this.bytes.slice();
-      next.set(encoded.subarray(0, room), this.offset);
-      this.bytes = next;
-    } else {
-      const next = this.bytes.slice();
-      next.set(encoded, this.offset);
-      this.bytes = next;
+    if (!encoded.length) {
+      return;
     }
-    this.offset = this.clampOffset(this.offset + encoded.length);
+    const room = this.bytes.length - this.offset;
+    if (room <= 0) {
+      return;
+    }
+    const caretBefore = this.snapshotCaret();
+    const startOffset = this.offset;
+    const written = encoded.subarray(0, Math.min(encoded.length, room));
+    const before = this.bytes.slice(startOffset, startOffset + written.length);
+    const next = this.bytes.slice();
+    next.set(written, startOffset);
+    this.bytes = next;
+    this.offset = this.clampOffset(this.offset + written.length);
     this.nibble = 0;
     this.selEnd = this.offset;
-    this.render(true);
-    this.options.onChange?.("edit");
+    this.commitEdit(startOffset, before, caretBefore);
   }
 
   private onKey(ev: KeyboardEvent) {
-    if (ev.ctrlKey || ev.metaKey || ev.altKey) {
+    if (ev.ctrlKey || ev.metaKey) {
+      const key = ev.key.toLowerCase();
+      if (key === "z" || key === "y") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (key === "y" || ev.shiftKey) {
+          this.redo();
+        } else {
+          this.undo();
+        }
+      }
+      return;
+    }
+    if (ev.altKey) {
       return;
     }
     const extend = ev.shiftKey;

@@ -120,9 +120,19 @@ export class MarkdownPreview {
   constructor(host: HTMLElement) {
     this.host = host;
     host.classList.add("md-preview-host");
+    const shadow = document.createElement("div");
+    shadow.className = "md-scroll-shadow";
+    shadow.setAttribute("aria-hidden", "true");
     this.contentEl = document.createElement("div");
     this.contentEl.className = "md-preview";
-    host.appendChild(this.contentEl);
+    host.append(shadow, this.contentEl);
+    host.addEventListener("scroll", () => this.syncScrollShadow(), { passive: true });
+    new ResizeObserver(() => this.syncScrollShadow()).observe(host);
+    this.syncScrollShadow();
+  }
+
+  private syncScrollShadow() {
+    this.host.classList.toggle("scrolled", this.host.scrollTop > 0);
   }
 
   setTheme(theme: ThemeId) {
@@ -155,6 +165,7 @@ export class MarkdownPreview {
     if (gen !== this.gen) {
       return;
     }
+    this.syncScrollShadow();
   }
 
   invalidate() {

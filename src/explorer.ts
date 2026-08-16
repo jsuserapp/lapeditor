@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { confirmDialog } from "./confirm";
 import { t } from "./i18n";
+import { promptName } from "./name-dialog";
 import { setTooltip } from "./tooltip";
 
 export const EXPLORER_WIDTH_MIN = 160;
@@ -13,10 +15,16 @@ export type DirEntryDto = {
   isDir: boolean;
 };
 
+export type SidebarView = "explorer" | "search";
+
 export type ExplorerApi = {
   setOpen: (open: boolean) => void;
   isOpen: () => boolean;
   toggle: () => void;
+  setView: (view: SidebarView) => void;
+  getView: () => SidebarView;
+  openView: (view: SidebarView) => void;
+  getWorkspace: () => string | null;
   setWorkspace: (path: string | null) => Promise<void>;
   revealPath: (path: string | null) => void;
   syncLocale: () => void;
@@ -25,12 +33,15 @@ export type ExplorerApi = {
 
 type ExplorerHost = {
   onOpenFile: (path: string) => void;
+  onPathsRemoved?: (path: string, isDir: boolean) => void;
   onLayout: () => void;
   onPersist: (patch: {
     explorerOpen?: boolean;
     explorerWidth?: number;
     workspaceFolder?: string;
   }) => void;
+  onViewChange?: (view: SidebarView) => void;
+  onWorkspaceChange?: (path: string | null) => void;
 };
 
 function pathKey(path: string) {
@@ -45,6 +56,52 @@ function basename(path: string) {
 function parentPath(path: string) {
   const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return idx < 0 ? "" : path.slice(0, idx);
+}
+
+function invokeError(err: unknown): string {
+  if (typeof err === "string") {
+    return err;
+  }
+  if (err && typeof err === "object" && "message" in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return String(err);
+}
+
+function explorerActionError(err: unknown): string {
+  const raw = invokeError(err);
+  if (raw === "empty") {
+    return t("explorer.errEmptyName");
+  }
+  if (raw === "invalid") {
+    return t("explorer.errInvalidName");
+  }
+  if (raw === "exists") {
+    return t("explorer.errExists");
+  }
+  if (raw === "not_dir") {
+    return t("explorer.errNotDir");
+  }
+  if (raw === "not_found") {
+    return t("explorer.errNotFound");
+  }
+  return t("explorer.errFailed", { error: raw.replace(/^io:\s*/i, "") });
+}
+
+function validateEntryName(name: string): string | null {
+  const value = name.trim();
+  if (!value) {
+    return t("explorer.errEmptyName");
+  }
+  if (
+    value === "." ||
+    value === ".." ||
+    /[\\/<>:"|?*\u0000-\u001f]/.test(value) ||
+    /[. ]$/.test(value)
+  ) {
+    return t("explorer.errInvalidName");
+  }
+  return null;
 }
 
 export function clampExplorerWidth(width: number, hostWidth?: number) {
@@ -67,15 +124,23 @@ export function applyExplorerWidth(workbench: HTMLElement, width: number) {
 export function bindExplorer(host: ExplorerHost): ExplorerApi {
   const workbench = document.querySelector<HTMLDivElement>("#workbench")!;
   const sidebar = document.querySelector<HTMLElement>("#sidebar")!;
+  const explorerPanel = document.querySelector<HTMLDivElement>("#explorer-panel")!;
+  const searchPanel = document.querySelector<HTMLDivElement>("#search-panel")!;
   const gutter = document.querySelector<HTMLDivElement>("#sidebar-gutter")!;
   const tree = document.querySelector<HTMLDivElement>("#explorer-tree")!;
   const toggleBtn = document.querySelector<HTMLButtonElement>("#btn-explorer")!;
+  const searchBtn = document.querySelector<HTMLButtonElement>("#btn-search")!;
   const folderBtn = document.querySelector<HTMLButtonElement>("#btn-explorer-folder")!;
+  const newFileBtn = document.querySelector<HTMLButtonElement>("#btn-explorer-new-file")!;
+  const newFolderBtn = document.querySelector<HTMLButtonElement>("#btn-explorer-new-folder")!;
+  const deleteBtn = document.querySelector<HTMLButtonElement>("#btn-explorer-delete")!;
 
   let open = false;
+  let view: SidebarView = "explorer";
   let width = EXPLORER_WIDTH_DEFAULT;
   let workspace: string | null = null;
   let selected: string | null = null;
+  let selectedIsDir = false;
   const expanded = new Set<string>();
   const children = new Map<string, DirEntryDto[]>();
   const dirPaths = new Map<string, string>();
@@ -83,14 +148,26 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
   let watchTimer: number | undefined;
   let expandedTimer: number | undefined;
 
+  const applyView = (next: SidebarView) => {
+    view = next;
+    explorerPanel.hidden = view !== "explorer";
+    searchPanel.hidden = view !== "search";
+    toggleBtn.setAttribute("aria-pressed", open && view === "explorer" ? "true" : "false");
+    searchBtn.setAttribute("aria-pressed", open && view === "search" ? "true" : "false");
+    host.onViewChange?.(view);
+  };
+
   const applyOpen = (next: boolean) => {
     open = next;
     workbench.classList.toggle("explorer-open", open);
     sidebar.hidden = !open;
     gutter.hidden = !open;
-    toggleBtn.setAttribute("aria-pressed", open ? "true" : "false");
     if (open) {
       applyExplorerWidth(workbench, width);
+      applyView(view);
+    } else {
+      toggleBtn.setAttribute("aria-pressed", "false");
+      searchBtn.setAttribute("aria-pressed", "false");
     }
     host.onLayout();
   };
@@ -101,6 +178,14 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
     workspaceFolder?: string;
   }) => {
     host.onPersist(patch);
+  };
+
+  const syncExplorerActions = () => {
+    const hasSel = !!workspace && !!selected;
+    const folderSel = hasSel && selectedIsDir;
+    newFileBtn.disabled = !folderSel;
+    newFolderBtn.disabled = !folderSel;
+    deleteBtn.disabled = !hasSel;
   };
 
   const renderEmpty = () => {
@@ -116,12 +201,17 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
     action.addEventListener("click", () => void pickFolder());
     box.append(hint, action);
     tree.appendChild(box);
+    selected = null;
+    selectedIsDir = false;
+    syncExplorerActions();
   };
 
-  const selectRow = (row: HTMLElement, path: string) => {
+  const selectRow = (row: HTMLElement, path: string, isDir: boolean) => {
     selected = path;
+    selectedIsDir = isDir;
     tree.querySelectorAll(".tree-row.active").forEach((el) => el.classList.remove("active"));
     row.classList.add("active");
+    syncExplorerActions();
   };
 
   const renderNode = (entry: DirEntryDto, depth: number): HTMLElement => {
@@ -147,7 +237,7 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
 
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      selectRow(row, entry.path);
+      selectRow(row, entry.path, entry.isDir);
       if (!entry.isDir) {
         host.onOpenFile(entry.path);
         return;
@@ -185,6 +275,7 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
     };
     expanded.add(pathKey(workspace));
     tree.appendChild(renderNode(root, 0));
+    syncExplorerActions();
   };
 
   const loadDir = async (path: string) => {
@@ -350,13 +441,131 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
       try {
         await loadDir(workspace);
         expanded.add(pathKey(workspace));
+        selected = workspace;
+        selectedIsDir = true;
       } catch (err) {
         console.warn("failed to open workspace", workspace, err);
         workspace = null;
+        selected = null;
+        selectedIsDir = false;
       }
+    } else {
+      selected = null;
+      selectedIsDir = false;
     }
     renderTree();
     scheduleWatch();
+    syncExplorerActions();
+    host.onWorkspaceChange?.(workspace);
+  };
+
+  const showCreated = async (parent: string, created: string, isDir: boolean) => {
+    expanded.add(pathKey(parent));
+    dirPaths.set(pathKey(parent), parent);
+    try {
+      await loadDir(parent);
+    } catch (err) {
+      console.warn("failed to refresh folder after create", parent, err);
+    }
+    selected = created;
+    selectedIsDir = isDir;
+    renderTree();
+    scheduleExpanded();
+    const row = [...tree.querySelectorAll<HTMLElement>(".tree-row")].find((el) => {
+      const node = el.closest<HTMLElement>(".tree-node");
+      return node?.dataset.path && pathKey(node.dataset.path) === pathKey(created);
+    });
+    row?.classList.add("active");
+    row?.scrollIntoView({ block: "nearest" });
+    syncExplorerActions();
+    if (!isDir) {
+      host.onOpenFile(created);
+    }
+  };
+
+  const createInSelection = async (isDir: boolean) => {
+    if (!selected || !selectedIsDir) {
+      return;
+    }
+    const folder = selected;
+    const folderName = basename(folder);
+    await promptName({
+      title: isDir ? t("explorer.newFolderTitle") : t("explorer.newFileTitle"),
+      hint: t(isDir ? "explorer.newFolderHint" : "explorer.newFileHint", { folder: folderName }),
+      label: t("explorer.nameLabel"),
+      confirmLabel: t("explorer.create"),
+      validate: validateEntryName,
+      async submit(name) {
+        try {
+          const created = await invoke<string>("create_fs_entry", {
+            parent: folder,
+            name,
+            isDir,
+          });
+          await showCreated(folder, created, isDir);
+        } catch (err) {
+          throw new Error(explorerActionError(err));
+        }
+      },
+    });
+  };
+
+  const deleteSelection = async () => {
+    if (!selected || !workspace) {
+      return;
+    }
+    const target = selected;
+    const isDir = selectedIsDir;
+    const name = basename(target);
+    const result = await confirmDialog({
+      title: isDir ? t("explorer.deleteFolderTitle") : t("explorer.deleteFileTitle"),
+      message: t(isDir ? "explorer.deleteFolder" : "explorer.deleteFile", { name }),
+      kind: "warning",
+      buttons: [
+        { id: "delete", label: t("explorer.deleteConfirm"), role: "danger" },
+        { id: "cancel", label: t("dialog.cancel") },
+      ],
+      defaultId: "cancel",
+      cancelId: "cancel",
+    });
+    if (result !== "delete") {
+      return;
+    }
+    try {
+      await invoke("delete_fs_entry", { path: target });
+    } catch (err) {
+      await confirmDialog({
+        title: t("explorer.deleteTitle"),
+        message: explorerActionError(err),
+        kind: "error",
+        buttons: [{ id: "ok", label: t("dialog.ok"), role: "primary" }],
+        defaultId: "ok",
+        cancelId: "ok",
+      });
+      return;
+    }
+    host.onPathsRemoved?.(target, isDir);
+    if (pathKey(target) === pathKey(workspace)) {
+      await setWorkspace(null);
+      persist({ workspaceFolder: "" });
+      return;
+    }
+    const parent = parentPath(target) || workspace;
+    selected = parent;
+    selectedIsDir = true;
+    expanded.delete(pathKey(target));
+    children.delete(pathKey(target));
+    dirPaths.delete(pathKey(target));
+    if (parent) {
+      try {
+        await loadDir(parent);
+      } catch (err) {
+        console.warn("failed to refresh folder after delete", parent, err);
+      }
+    }
+    renderTree();
+    scheduleExpanded();
+    syncExplorerActions();
   };
 
   const pickFolder = async () => {
@@ -376,6 +585,7 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
 
   const revealPath = (path: string | null) => {
     selected = path;
+    selectedIsDir = false;
     if (!path || !workspace || !open) {
       tree.querySelectorAll(".tree-row.active").forEach((el) => el.classList.remove("active"));
       if (path) {
@@ -385,6 +595,7 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
         });
         row?.classList.add("active");
       }
+      syncExplorerActions();
       return;
     }
     const rootKey = pathKey(workspace);
@@ -422,22 +633,36 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
       });
       row?.classList.add("active");
       row?.scrollIntoView({ block: "nearest" });
+      syncExplorerActions();
     })();
   };
 
   const syncLocale = () => {
     setTooltip(toggleBtn, t("explorer.toggle"));
     setTooltip(folderBtn, t("explorer.openFolderTitle"));
+    setTooltip(newFileBtn, t("explorer.newFileTitle"));
+    setTooltip(newFolderBtn, t("explorer.newFolderTitle"));
+    setTooltip(deleteBtn, t("explorer.deleteTitle"));
     if (!workspace) {
       renderEmpty();
     }
   };
 
   toggleBtn.addEventListener("click", () => {
-    applyOpen(!open);
-    persist({ explorerOpen: open });
+    if (open && view === "explorer") {
+      applyOpen(false);
+      persist({ explorerOpen: false });
+      return;
+    }
+    applyView("explorer");
+    applyOpen(true);
+    persist({ explorerOpen: true });
   });
   folderBtn.addEventListener("click", () => void pickFolder());
+  newFileBtn.addEventListener("click", () => void createInSelection(false));
+  newFolderBtn.addEventListener("click", () => void createInSelection(true));
+  deleteBtn.addEventListener("click", () => void deleteSelection());
+  syncExplorerActions();
 
   let dragging = false;
   const onMove = (ev: MouseEvent) => {
@@ -487,12 +712,23 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
       applyOpen(!open);
       persist({ explorerOpen: open });
     },
+    setView(next) {
+      applyView(next);
+    },
+    getView: () => view,
+    openView(next) {
+      applyView(next);
+      applyOpen(true);
+      persist({ explorerOpen: true });
+    },
+    getWorkspace: () => workspace,
     setWorkspace,
     revealPath,
     syncLocale,
     applyInitial(nextOpen, nextWidth, folder) {
       width = clampExplorerWidth(nextWidth);
       applyExplorerWidth(workbench, width);
+      applyView("explorer");
       applyOpen(nextOpen);
       return setWorkspace(folder);
     },

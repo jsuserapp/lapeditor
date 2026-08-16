@@ -5,10 +5,16 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as monaco from "monaco-editor/editor/editor.api.js";
 import editorWorkerUrl from "monaco-editor/editor/editor.worker.js?url";
 import "monaco-editor/editor/contrib/folding/browser/folding.js";
+import "monaco-editor/editor/contrib/contextmenu/browser/contextmenu.js";
+import "monaco-editor/editor/contrib/clipboard/browser/clipboard.js";
+import { isIMenuItem, MenuId, MenuRegistry } from "monaco-editor/platform/actions/common/actions.js";
+import { CommandsRegistry } from "monaco-editor/platform/commands/common/commands.js";
+import { ContextKeyExpr } from "monaco-editor/platform/contextkey/common/contextkey.js";
 import "monaco-editor/min/vs/editor/editor.main.css";
 import { applyDomI18n, listLocales, loadLocale, t } from "./i18n";
 import { bindAddLanguageDialog, openAddLanguageDialog } from "./add-language";
 import { bindConfirmDialog, confirmDialog } from "./confirm";
+import { bindNameDialog } from "./name-dialog";
 import { bindTitlebar, syncTitlebarLocale } from "./titlebar";
 import {
   formatText,
@@ -21,7 +27,7 @@ import {
 } from "./format";
 import { bindFormatDialogs, openFormatOptionsDialog } from "./format-ui";
 import { bindFindWidget, closeFind, openFind, refreshFind, syncFindLocale } from "./find";
-import { addFileIcon, applyToolbarIcons } from "./icons";
+import { addFileIcon, applyToolbarIcons, copyIcon, cutIcon, pasteIcon } from "./icons";
 import { bindTooltips, setTooltip } from "./tooltip";
 import { registerLanguageIds, registerTextMateLanguages, type LanguagePluginDto } from "./textmate";
 import {
@@ -34,13 +40,14 @@ import {
   type ThemeId,
 } from "./theme";
 import { bindExplorer, type ExplorerApi } from "./explorer";
+import { bindSearch, type SearchApi, type SearchExcludeSettings, type SearchHit } from "./search";
 import {
   bindSettings,
   DEFAULT_FONT_FAMILY,
   DEFAULT_FONT_SIZE,
   type SettingsApi,
 } from "./settings";
-import { HexEditor } from "./hex";
+import { emptyHexHistory, HexEditor, type HexHistory } from "./hex";
 import {
   applyMdSplitRatio,
   bindMdGutter,
@@ -100,7 +107,8 @@ type TabState = {
   bytesStale: boolean;
   textStale: boolean;
   byteMarkIds: string[];
-  mdPreview: boolean;
+  mdView: MdView;
+  hexHistory: HexHistory;
 };
 
 type SessionTabDto = {
@@ -118,6 +126,7 @@ type SessionTabDto = {
   diskSize?: number | null;
   viewMode?: string | null;
   mdPreview?: boolean | null;
+  mdView?: string | null;
 };
 
 type SessionDto = {
@@ -135,12 +144,22 @@ type AppSettings = {
   workspaceFolder?: string | null;
   fontFamily?: string;
   fontSize?: number;
+  searchExclude?: SearchExcludeSettings | null;
 };
 
 const PLAINTEXT = "plaintext";
 
+type MdView = "off" | "split" | "reader";
+
 function isMarkdownLanguage(languageId: string | undefined): boolean {
   return languageId === "markdown";
+}
+
+function parseMdView(value: string | boolean | null | undefined): MdView {
+  if (value === "split" || value === "reader") {
+    return value;
+  }
+  return value === true ? "split" : "off";
 }
 
 type MdPreview = {
@@ -178,6 +197,7 @@ const formatOptionsButton = document.querySelector<HTMLButtonElement>("#btn-form
 const mdHost = document.querySelector<HTMLDivElement>("#md-host")!;
 const mdGutter = document.querySelector<HTMLDivElement>("#md-gutter")!;
 const mdButton = document.querySelector<HTMLButtonElement>("#btn-md")!;
+const readButton = document.querySelector<HTMLButtonElement>("#btn-read")!;
 
 const tabs = new Map<string, TabState>();
 let activeTabId: string | null = null;
@@ -201,9 +221,16 @@ let currentLocaleId = "en";
 let uiLocales: { id: string; name: string }[] = [];
 let hexEditor: HexEditor | undefined;
 let explorer: ExplorerApi | undefined;
+let searchUi: SearchApi | undefined;
 let settingsUi: SettingsApi | undefined;
 let formatIndent: FormatIndent = "2";
 let formatterCommands: FormatterCommandInfo[] = [];
+let canFormatKey: monaco.editor.IContextKey<boolean> | undefined;
+let hasSelectionKey: monaco.editor.IContextKey<boolean> | undefined;
+let canPasteKey: monaco.editor.IContextKey<boolean> | undefined;
+let editorContextMenu: monaco.IDisposable | undefined;
+let clipboardMenuPatched = false;
+let contextMenuIconObserver: MutationObserver | undefined;
 let mdPreview: MdPreview | undefined;
 let mdPreviewLoading: Promise<MdPreview> | null = null;
 let mdSplitRatio = MD_SPLIT_DEFAULT;
@@ -243,7 +270,8 @@ function snapshotSession(): SessionDto {
       diskLoaded: tab.diskLoaded,
       diskSize: tab.diskSize,
       viewMode: tab.viewMode,
-      mdPreview: tab.mdPreview,
+      mdPreview: tab.mdView !== "off",
+      mdView: tab.mdView === "off" ? null : tab.mdView,
     })),
   };
 }
@@ -385,15 +413,19 @@ function syncSaveButton() {
 
 function syncEditActions() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  const hexReady = !!tab && tab.viewMode === "hex" && !!hexEditor;
   const textReady = !!tab && tab.viewMode !== "hex" && !!editor;
   const model = tab?.model;
   const selection = editor?.getSelection();
   const hasSelection = textReady && !!selection && !selection.isEmpty();
-  pasteButton.disabled = !textReady;
+  const canPaste = textReady;
+  pasteButton.disabled = !canPaste;
   copyButton.disabled = !hasSelection;
   cutButton.disabled = !hasSelection;
-  undoButton.disabled = !textReady || !model?.canUndo();
-  redoButton.disabled = !textReady || !model?.canRedo();
+  hasSelectionKey?.set(hasSelection);
+  canPasteKey?.set(canPaste);
+  undoButton.disabled = hexReady ? !hexEditor?.canUndo() : !textReady || !model?.canUndo();
+  redoButton.disabled = hexReady ? !hexEditor?.canRedo() : !textReady || !model?.canRedo();
   const pasteLabel = t("toolbar.pasteTitle");
   const copyLabel = t("toolbar.copyTitle");
   const cutLabel = t("toolbar.cutTitle");
@@ -411,9 +443,94 @@ function syncEditActions() {
   redoButton.setAttribute("aria-label", redoLabel);
 }
 
+function selectedEditorText(): string | undefined {
+  if (!editor) {
+    return undefined;
+  }
+  const selection = editor.getSelection();
+  if (!selection || selection.isEmpty()) {
+    return undefined;
+  }
+  return editor.getModel()?.getValueInRange(selection);
+}
+
+async function writeClipboardText(text: string) {
+  await invoke("write_clipboard", { text });
+}
+
+async function readClipboardText(): Promise<string> {
+  try {
+    return await invoke<string>("read_clipboard");
+  } catch {
+    return "";
+  }
+}
+
+async function runCopy() {
+  const text = selectedEditorText();
+  if (text == null) {
+    return;
+  }
+  editor?.focus();
+  await writeClipboardText(text);
+}
+
+async function runCut() {
+  const text = selectedEditorText();
+  if (text == null || !editor) {
+    return;
+  }
+  const selection = editor.getSelection();
+  editor.focus();
+  await writeClipboardText(text);
+  if (selection) {
+    editor.executeEdits("cut", [{ range: selection, text: "" }]);
+  }
+}
+
+async function runPaste() {
+  if (!editor) {
+    return;
+  }
+  editor.focus();
+  const text = await readClipboardText();
+  if (!text) {
+    return;
+  }
+  editor.trigger("keyboard", "paste", {
+    text,
+    pasteOnNewLine: false,
+    multicursorText: null,
+    mode: null,
+  });
+}
+
 function triggerEditAction(handlerId: string) {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-  if (!editor || !tab || tab.viewMode === "hex") {
+  if (!tab) {
+    return;
+  }
+  if (tab.viewMode === "hex") {
+    if (handlerId === "undo") {
+      hexEditor?.undo();
+    } else if (handlerId === "redo") {
+      hexEditor?.redo();
+    }
+    return;
+  }
+  if (!editor) {
+    return;
+  }
+  if (handlerId === "editor.action.clipboardPasteAction") {
+    void runPaste();
+    return;
+  }
+  if (handlerId === "editor.action.clipboardCopyAction") {
+    void runCopy();
+    return;
+  }
+  if (handlerId === "editor.action.clipboardCutAction") {
+    void runCut();
     return;
   }
   editor.focus();
@@ -457,8 +574,15 @@ function syncWrapButton() {
   wrapButton.setAttribute("aria-label", label);
 }
 
+function tabMdView(tab: TabState): MdView {
+  if (!isMarkdownLanguage(tab.languageId) || tab.viewMode === "hex") {
+    return "off";
+  }
+  return tab.mdView;
+}
+
 function tabShowsMdPreview(tab: TabState): boolean {
-  return tab.mdPreview && isMarkdownLanguage(tab.languageId) && tab.viewMode !== "hex";
+  return tabMdView(tab) !== "off";
 }
 
 async function ensureMdPreview(): Promise<MdPreview> {
@@ -477,11 +601,17 @@ async function ensureMdPreview(): Promise<MdPreview> {
 }
 
 function applyMdPreview(tab: TabState | undefined) {
-  const on = !!tab && tabShowsMdPreview(tab);
-  editorHost.classList.toggle("md-split", on);
-  mdHost.hidden = !on;
-  mdGutter.hidden = !on;
-  if (on && tab) {
+  const view = tab ? tabMdView(tab) : "off";
+  const split = view === "split";
+  const reader = view === "reader";
+  editorHost.classList.toggle("md-split", split);
+  editorHost.classList.toggle("md-reader", reader);
+  mdHost.hidden = view === "off";
+  mdGutter.hidden = !split;
+  if (tab?.viewMode !== "hex") {
+    monacoHost.hidden = reader;
+  }
+  if (view !== "off" && tab) {
     const source = tab.model.getValue();
     const tabId = tab.id;
     void ensureMdPreview().then((preview) => {
@@ -493,25 +623,37 @@ function applyMdPreview(tab: TabState | undefined) {
   }
 }
 
+function syncMdViewButton(
+  button: HTMLButtonElement,
+  on: boolean,
+  disabled: boolean,
+  onKey: string,
+  offKey: string,
+) {
+  button.classList.toggle("active", on);
+  button.setAttribute("aria-pressed", on ? "true" : "false");
+  button.disabled = disabled;
+  const label = on ? t(onKey) : t(offKey);
+  setTooltip(button, label);
+  button.setAttribute("aria-label", label);
+}
+
 function syncMdPreviewButton() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
   const markdown = isMarkdownLanguage(tab?.languageId);
-  const on = !!tab && markdown && tab.mdPreview && tab.viewMode !== "hex";
-  mdButton.classList.toggle("active", on);
-  mdButton.setAttribute("aria-pressed", on ? "true" : "false");
-  mdButton.disabled = !tab || !markdown;
-  const label = on ? t("toolbar.mdOn") : t("toolbar.mdOff");
-  setTooltip(mdButton, label);
-  mdButton.setAttribute("aria-label", label);
+  const view = tab && markdown ? tabMdView(tab) : "off";
+  const disabled = !tab || !markdown;
+  syncMdViewButton(mdButton, view === "split", disabled, "toolbar.mdOn", "toolbar.mdOff");
+  syncMdViewButton(readButton, view === "reader", disabled, "toolbar.readOn", "toolbar.readOff");
 }
 
-async function toggleMdPreview() {
+async function setMdView(next: Exclude<MdView, "off">) {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
   if (!tab || !isMarkdownLanguage(tab.languageId)) {
     return;
   }
-  tab.mdPreview = !tab.mdPreview;
-  if (tab.mdPreview && tab.viewMode === "hex") {
+  tab.mdView = tab.mdView === next ? "off" : next;
+  if (tab.mdView !== "off" && tab.viewMode === "hex") {
     tab.viewMode = "text";
     await showTabView(tab);
   } else {
@@ -536,18 +678,31 @@ function fillHexLabels() {
   hexEditor?.setAddressLabel(t("hex.address"), t("hex.dump"));
 }
 
+function applyHexBuffer(tab: TabState, keepCaret = true) {
+  hexEditor?.setBytes(tab.bytes, Math.max(tab.diskSize, tab.bytes.length), keepCaret);
+  hexEditor?.setHistory(tab.hexHistory);
+}
+
+function captureHexState(tab: TabState) {
+  if (!hexEditor) {
+    return;
+  }
+  tab.bytes = hexEditor.getBytes();
+  tab.hexHistory = hexEditor.getHistory();
+}
+
 async function showTabView(tab: TabState) {
   if (tab.viewMode === "hex") {
     await syncBytesFromText(tab);
     monacoHost.hidden = true;
     hexHost.hidden = false;
-    hexEditor?.setBytes(tab.bytes, Math.max(tab.diskSize, tab.bytes.length));
+    applyHexBuffer(tab);
     fillHexLabels();
     hexEditor?.focus();
     closeFind();
   } else {
     if (tab.textStale && hexEditor) {
-      tab.bytes = hexEditor.getBytes();
+      captureHexState(tab);
     }
     await syncTextFromBytes(tab);
     hexHost.hidden = true;
@@ -613,7 +768,7 @@ async function loadMoreForTab(tab: TabState) {
     tab.bytes = concatBytes(tab.bytes, more);
     tab.diskLoaded += more.length;
     if (tab.viewMode === "hex") {
-      hexEditor?.setBytes(tab.bytes, Math.max(tab.diskSize, tab.bytes.length));
+      applyHexBuffer(tab);
     } else {
       const text = await decodeBytes(tab.bytes, tab.encoding);
       await applyModelText(tab, text, "clean");
@@ -715,6 +870,7 @@ async function reloadTabFromDisk(tab: TabState) {
     tab.diskLoaded = file.diskLoaded;
     tab.bytesStale = false;
     tab.textStale = false;
+    tab.hexHistory = emptyHexHistory();
   } catch {
     forceTabDirty(tab);
     console.warn(t("status.fileMissing", { name: tab.title }));
@@ -959,8 +1115,186 @@ function canFormatActive() {
 function syncFormatButton() {
   const enabled = canFormatActive();
   formatButton.disabled = !enabled;
+  canFormatKey?.set(enabled);
   setTooltip(formatButton, t("toolbar.formatTitle"));
   setTooltip(formatOptionsButton, t("toolbar.formatOptionsTitle"));
+}
+
+function decorateContextMenuIcons(root: ParentNode) {
+  const icons = [
+    { label: t("editor.context.cut"), src: cutIcon },
+    { label: t("editor.context.copy"), src: copyIcon },
+    { label: t("editor.context.paste"), src: pasteIcon },
+  ];
+  for (const label of root.querySelectorAll<HTMLElement>(".monaco-menu .action-label")) {
+    const name = label.getAttribute("aria-label") ?? label.textContent?.trim() ?? "";
+    const icon = icons.find((item) => item.label === name);
+    if (!icon || label.querySelector(".lap-menu-icon")) {
+      continue;
+    }
+    const img = document.createElement("img");
+    img.className = "lap-menu-icon";
+    img.src = icon.src;
+    img.alt = "";
+    label.prepend(img);
+  }
+}
+
+function bindContextMenuIcons() {
+  if (contextMenuIconObserver) {
+    return;
+  }
+  contextMenuIconObserver = new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (!(node instanceof HTMLElement)) {
+          continue;
+        }
+        if (node.matches(".monaco-menu, .context-view, .monaco-menu-container")) {
+          decorateContextMenuIcons(node);
+          continue;
+        }
+        const menu = node.querySelector(".monaco-menu");
+        if (menu) {
+          decorateContextMenuIcons(menu);
+        }
+      }
+    }
+  });
+  contextMenuIconObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function hideDefaultClipboardMenuItems() {
+  if (clipboardMenuPatched) {
+    return;
+  }
+  clipboardMenuPatched = true;
+  const original = MenuRegistry.getMenuItems.bind(MenuRegistry);
+  MenuRegistry.getMenuItems = (id: unknown) => {
+    const items = original(id);
+    if (id !== MenuId.EditorContext) {
+      return items;
+    }
+    return items.filter((item: unknown) => {
+      if (isIMenuItem(item) && !item.command.icon) {
+        const commandId = item.command.id;
+        if (
+          commandId === "editor.action.clipboardCutAction" ||
+          commandId === "editor.action.clipboardCopyAction" ||
+          commandId === "editor.action.clipboardPasteAction"
+        ) {
+          return false;
+        }
+      }
+      if (item && typeof item === "object" && "submenu" in item) {
+        const submenu = (item as { submenu?: unknown }).submenu;
+        if (submenu === MenuId.EditorContextCopy || submenu === MenuId.EditorContextShare) {
+          return false;
+        }
+      }
+      return true;
+    });
+  };
+}
+
+function registerEditorContextMenu() {
+  if (!editor) {
+    return;
+  }
+  hideDefaultClipboardMenuItems();
+  bindContextMenuIcons();
+  editorContextMenu?.dispose();
+  canFormatKey = editor.createContextKey("lapeditor.canFormat", canFormatActive());
+  hasSelectionKey = editor.createContextKey("lapeditor.hasSelection", false);
+  canPasteKey = editor.createContextKey("lapeditor.canPaste", false);
+  syncEditActions();
+
+  const store: monaco.IDisposable[] = [];
+  const clipboardItems = [
+    {
+      id: "lapeditor.cut",
+      key: "editor.context.cut",
+      icon: "lap-cut",
+      order: 1,
+      precondition: ContextKeyExpr.has("lapeditor.hasSelection"),
+      run: () => void runCut(),
+    },
+    {
+      id: "lapeditor.copy",
+      key: "editor.context.copy",
+      icon: "lap-copy",
+      order: 2,
+      precondition: ContextKeyExpr.has("lapeditor.hasSelection"),
+      run: () => void runCopy(),
+    },
+    {
+      id: "lapeditor.paste",
+      key: "editor.context.paste",
+      icon: "lap-paste",
+      order: 3,
+      precondition: ContextKeyExpr.has("lapeditor.canPaste"),
+      run: () => void runPaste(),
+    },
+  ];
+  for (const item of clipboardItems) {
+    store.push(CommandsRegistry.registerCommand(item.id, item.run));
+    store.push(
+      MenuRegistry.appendMenuItem(MenuId.EditorContext, {
+        command: {
+          id: item.id,
+          title: t(item.key),
+          icon: { id: item.icon },
+          precondition: item.precondition,
+        },
+        group: "9_cutcopypaste",
+        order: item.order,
+      }),
+    );
+  }
+
+  store.push(
+    CommandsRegistry.registerCommand("lapeditor.format", () => {
+      void formatActive();
+    }),
+  );
+  store.push(
+    MenuRegistry.appendMenuItem(MenuId.EditorContext, {
+      command: {
+        id: "lapeditor.format",
+        title: t("editor.context.format"),
+        precondition: ContextKeyExpr.has("lapeditor.canFormat"),
+      },
+      group: "a_format",
+      order: 1,
+    }),
+  );
+
+  const foldingItems = [
+    { id: "lapeditor.fold", key: "editor.context.fold", command: "editor.fold", order: 1 },
+    { id: "lapeditor.foldAll", key: "editor.context.foldAll", command: "editor.foldAll", order: 2 },
+    { id: "lapeditor.unfoldAll", key: "editor.context.unfoldAll", command: "editor.unfoldAll", order: 3 },
+  ];
+  for (const item of foldingItems) {
+    store.push(
+      editor.addAction({
+        id: item.id,
+        label: t(item.key),
+        contextMenuGroupId: "b_folding",
+        contextMenuOrder: item.order,
+        run: (ed) => {
+          ed.trigger("contextmenu", item.command, null);
+        },
+      }),
+    );
+  }
+
+  editorContextMenu = {
+    dispose() {
+      for (const item of store) {
+        item.dispose();
+      }
+    },
+  };
 }
 
 async function refreshFormatterCommands() {
@@ -1217,6 +1551,7 @@ async function convertTabEncoding(tab: TabState, encoding: EncodingId) {
     tab.encoding = encoding;
     tab.bytesStale = false;
     tab.textStale = false;
+    tab.hexHistory = emptyHexHistory();
     const text = await decodeBytes(tab.bytes, encoding);
     await applyModelText(tab, text, "dirty");
     if (tab.viewMode === "hex") {
@@ -1275,8 +1610,11 @@ function syncLocaleButton() {
 }
 
 function syncThemeButton() {
-  themeButton.innerHTML = themeButtonIcon(currentTheme);
-  const label = currentTheme === "dark" ? t("theme.toLight") : t("theme.toDark");
+  const light = currentTheme === "light";
+  themeButton.innerHTML = themeButtonIcon();
+  themeButton.classList.toggle("active", light);
+  themeButton.setAttribute("aria-pressed", light ? "true" : "false");
+  const label = t("theme.light");
   setTooltip(themeButton, label);
   themeButton.setAttribute("aria-label", label);
 }
@@ -1296,6 +1634,98 @@ function applyTheme(theme: ThemeId) {
     });
   }
   syncThemeButton();
+}
+
+function relativeToWorkspace(path: string, workspace: string | null): string | null {
+  if (!workspace) {
+    return null;
+  }
+  const normPath = path.replace(/\\/g, "/");
+  const normRoot = workspace.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (normPath.toLowerCase() === normRoot.toLowerCase()) {
+    return basename(path);
+  }
+  if (normPath.toLowerCase().startsWith(normRoot.toLowerCase() + "/")) {
+    return normPath.slice(normRoot.length + 1).replace(/\//g, path.includes("\\") ? "\\" : "/");
+  }
+  return null;
+}
+
+const tabContextMenu = document.querySelector<HTMLDivElement>("#tab-context-menu")!;
+const tabCtxFullPath = document.querySelector<HTMLButtonElement>("#tab-ctx-full-path")!;
+const tabCtxRelPath = document.querySelector<HTMLButtonElement>("#tab-ctx-rel-path")!;
+const tabCtxFileName = document.querySelector<HTMLButtonElement>("#tab-ctx-file-name")!;
+const tabCtxClose = document.querySelector<HTMLButtonElement>("#tab-ctx-close")!;
+let tabContextTabId: string | null = null;
+
+function hideTabContextMenu() {
+  tabContextMenu.hidden = true;
+  tabContextTabId = null;
+}
+
+function showTabContextMenu(tab: TabState, clientX: number, clientY: number) {
+  tabContextTabId = tab.id;
+  const hasPath = !!tab.path;
+  const rel = hasPath ? relativeToWorkspace(tab.path!, explorer?.getWorkspace() ?? null) : null;
+  tabCtxFullPath.disabled = !hasPath;
+  tabCtxRelPath.disabled = !rel;
+  tabCtxFileName.disabled = !hasPath;
+  tabCtxClose.disabled = false;
+
+  tabContextMenu.hidden = false;
+  const pad = 8;
+  const rect = tabContextMenu.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - rect.width - pad);
+  const top = Math.min(clientY, window.innerHeight - rect.height - pad);
+  tabContextMenu.style.left = `${Math.max(pad, left)}px`;
+  tabContextMenu.style.top = `${Math.max(pad, top)}px`;
+}
+
+function bindTabContextMenu() {
+  tabCtxFullPath.addEventListener("click", () => {
+    const tab = tabContextTabId ? tabs.get(tabContextTabId) : undefined;
+    hideTabContextMenu();
+    if (tab?.path) {
+      void writeClipboardText(tab.path);
+    }
+  });
+  tabCtxRelPath.addEventListener("click", () => {
+    const tab = tabContextTabId ? tabs.get(tabContextTabId) : undefined;
+    hideTabContextMenu();
+    if (!tab?.path) {
+      return;
+    }
+    const rel = relativeToWorkspace(tab.path, explorer?.getWorkspace() ?? null);
+    if (rel) {
+      void writeClipboardText(rel);
+    }
+  });
+  tabCtxFileName.addEventListener("click", () => {
+    const tab = tabContextTabId ? tabs.get(tabContextTabId) : undefined;
+    hideTabContextMenu();
+    if (tab?.path) {
+      void writeClipboardText(basename(tab.path));
+    }
+  });
+  tabCtxClose.addEventListener("click", () => {
+    const id = tabContextTabId;
+    hideTabContextMenu();
+    if (id) {
+      void closeTab(id);
+    }
+  });
+  document.addEventListener("pointerdown", (ev) => {
+    if (tabContextMenu.hidden) {
+      return;
+    }
+    const target = ev.target;
+    if (target instanceof Node && tabContextMenu.contains(target)) {
+      return;
+    }
+    hideTabContextMenu();
+  });
+  window.addEventListener("blur", () => hideTabContextMenu());
+  window.addEventListener("resize", () => hideTabContextMenu());
 }
 
 function renderTabs() {
@@ -1322,6 +1752,12 @@ function renderTabs() {
     el.appendChild(title);
     el.appendChild(close);
     el.addEventListener("click", () => activateTab(tab.id));
+    el.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      activateTab(tab.id);
+      showTabContextMenu(tab, ev.clientX, ev.clientY);
+    });
     tabBar.appendChild(el);
   }
 
@@ -1495,7 +1931,7 @@ function activateTab(id: string) {
     if (prev) {
       prev.viewState = editor.saveViewState();
       if (prev.viewMode === "hex" && hexEditor) {
-        prev.bytes = hexEditor.getBytes();
+        captureHexState(prev);
       }
     }
   }
@@ -1533,7 +1969,7 @@ function createTab(options?: {
   diskSize?: number;
   diskLoaded?: number;
   viewMode?: ViewMode;
-  mdPreview?: boolean;
+  mdView?: MdView;
 }): TabState {
   const id = options?.id ?? `tab-${tabSeq++}`;
   const numeric = Number(id.replace(/^tab-/, ""));
@@ -1575,7 +2011,8 @@ function createTab(options?: {
     bytesStale: !options?.bytes,
     textStale: false,
     byteMarkIds: [],
-    mdPreview: options?.mdPreview === true && isMarkdownLanguage(languageId),
+    mdView: options?.mdView && isMarkdownLanguage(languageId) ? options.mdView : "off",
+    hexHistory: emptyHexHistory(),
   };
 
   if (tab.dirty) {
@@ -1591,6 +2028,7 @@ function createTab(options?: {
     syncTabDirtyFromModel(tab);
     tab.bytesStale = true;
     tab.textStale = false;
+    tab.hexHistory = emptyHexHistory();
     refreshByteMarkDecorations(tab);
     updateStatusBar();
     if (tab.id === activeTabId) {
@@ -1612,6 +2050,54 @@ function createTab(options?: {
   }
   scheduleSyncWatchedFiles();
   return tab;
+}
+
+function pathIsRemoved(tabPath: string, removed: string, isDir: boolean) {
+  const tabKey = pathKey(tabPath);
+  const removedKey = pathKey(removed);
+  return isDir ? tabKey === removedKey || tabKey.startsWith(`${removedKey}/`) : tabKey === removedKey;
+}
+
+function forgetDeletedExplorerPath(removed: string, isDir: boolean) {
+  const affected = [...tabs.values()].filter((tab) => tab.path && pathIsRemoved(tab.path, removed, isDir));
+  for (const tab of affected) {
+    if (tab.dirty) {
+      tab.path = null;
+      tab.untitledNumber = nextUntitledNumber();
+      tab.title = t("tab.untitled", { n: tab.untitledNumber });
+      tab.diskStamp = null;
+      tab.ignoredStamp = null;
+    } else {
+      disposeTab(tab.id);
+    }
+  }
+  if (affected.length) {
+    renderTabs();
+    updateStatusForActive();
+    schedulePersistSession();
+    scheduleSyncWatchedFiles();
+  }
+}
+
+function disposeTab(id: string) {
+  const tab = tabs.get(id);
+  if (!tab) {
+    return;
+  }
+  tab.model.dispose();
+  tabs.delete(id);
+  if (activeTabId === id) {
+    activeTabId = null;
+    const next = tabs.keys().next().value as string | undefined;
+    if (next) {
+      activateTab(next);
+    } else {
+      editor?.setModel(null);
+      renderTabs();
+      syncLanguageSelect();
+      updateStatusForActive();
+    }
+  }
 }
 
 async function closeTab(id: string) {
@@ -1654,51 +2140,71 @@ async function closeTab(id: string) {
     }
   }
 
-  tab.model.dispose();
-  tabs.delete(id);
-
-  if (activeTabId === id) {
-    activeTabId = null;
-    const next = tabs.keys().next().value as string | undefined;
-    if (next) {
-      activateTab(next);
-    } else {
-      editor?.setModel(null);
-      renderTabs();
-      syncLanguageSelect();
-      updateStatusForActive();
-    }
-  } else {
+  disposeTab(id);
+  if (activeTabId !== id) {
     renderTabs();
   }
   schedulePersistSession();
   scheduleSyncWatchedFiles();
 }
 
-async function openPath(path: string) {
+async function openPath(path: string, reveal?: { line: number; column: number; endColumn?: number }) {
   const existing = [...tabs.values()].find(
     (tab) => tab.path && pathKey(tab.path) === pathKey(path),
   );
   if (existing) {
     activateTab(existing.id);
+    if (reveal && existing.viewMode === "hex") {
+      existing.viewMode = "text";
+      await showTabView(existing);
+    }
+  } else {
+    const file = await loadFilePrefix(path);
+    const languageId =
+      (await invoke<string | null>("language_id_for_path", { path })) ?? PLAINTEXT;
+
+    const tab = createTab({
+      title: basename(path),
+      path,
+      languageId,
+      encoding: file.encoding,
+      content: file.text,
+      bytes: file.bytes,
+      diskSize: file.diskSize,
+      diskLoaded: file.diskLoaded,
+    });
+    await stampTabFromDisk(tab);
+    schedulePersistSession();
+  }
+
+  if (!reveal || !editor) {
     return;
   }
-  const file = await loadFilePrefix(path);
-  const languageId =
-    (await invoke<string | null>("language_id_for_path", { path })) ?? PLAINTEXT;
-
-  const tab = createTab({
-    title: basename(path),
-    path,
-    languageId,
-    encoding: file.encoding,
-    content: file.text,
-    bytes: file.bytes,
-    diskSize: file.diskSize,
-    diskLoaded: file.diskLoaded,
+  const line = Math.max(1, reveal.line);
+  const column = Math.max(1, reveal.column);
+  const endColumn = Math.max(column, reveal.endColumn ?? column);
+  // Wait a frame so the model/view is ready after activate/create.
+  requestAnimationFrame(() => {
+    if (!editor) {
+      return;
+    }
+    editor.revealPositionInCenter({ lineNumber: line, column });
+    editor.setSelection({
+      startLineNumber: line,
+      startColumn: column,
+      endLineNumber: line,
+      endColumn,
+    });
+    editor.focus();
   });
-  await stampTabFromDisk(tab);
-  schedulePersistSession();
+}
+
+async function openSearchHit(hit: SearchHit) {
+  await openPath(hit.path, {
+    line: hit.line,
+    column: hit.column,
+    endColumn: hit.endColumn,
+  });
 }
 
 async function openFile() {
@@ -1833,8 +2339,8 @@ function setActiveLanguage(languageId: string) {
   }
   tab.languageId = languageId;
   monaco.editor.setModelLanguage(tab.model, languageId);
-  if (!isMarkdownLanguage(languageId) && tab.mdPreview) {
-    tab.mdPreview = false;
+  if (!isMarkdownLanguage(languageId) && tab.mdView !== "off") {
+    tab.mdView = "off";
   }
   applyMdPreview(tab);
   layoutEditor();
@@ -1905,7 +2411,7 @@ async function restoreSession(): Promise<boolean> {
         diskSize: row.diskSize,
         diskLoaded: row.diskLoaded,
         viewMode: row.item.viewMode === "hex" ? "hex" : "text",
-        mdPreview: row.item.mdPreview === true,
+        mdView: parseMdView(row.item.mdView ?? row.item.mdPreview),
       });
       if (row.item.path) {
         if (
@@ -1960,6 +2466,7 @@ async function bindSessionFlush() {
 
 function bindUi() {
   bindConfirmDialog();
+  bindNameDialog();
   document.querySelector("#btn-new")!.addEventListener("click", () => createTab());
   document.querySelector("#btn-open")!.addEventListener("click", () => void openFile());
   saveButton.addEventListener("click", () => {
@@ -2003,7 +2510,8 @@ function bindUi() {
   wrapButton.addEventListener("click", () => toggleWordWrap());
   formatButton.addEventListener("click", () => void formatActive());
   formatOptionsButton.addEventListener("click", () => void openFormatOptionsDialog());
-  mdButton.addEventListener("click", () => void toggleMdPreview());
+  mdButton.addEventListener("click", () => void setMdView("split"));
+  readButton.addEventListener("click", () => void setMdView("reader"));
   syntaxButton.addEventListener("click", (ev) => {
     ev.stopPropagation();
     setSyntaxMenuOpen(syntaxMenu.hidden);
@@ -2057,8 +2565,10 @@ function bindUi() {
       syncEditActions();
       syncFindLocale();
       explorer?.syncLocale();
+      searchUi?.syncLocale();
       settingsUi?.syncLocale();
       syncTitlebarLocale();
+      registerEditorContextMenu();
     })();
   });
   statusEolEl.addEventListener("click", (ev) => {
@@ -2119,6 +2629,7 @@ function bindUi() {
     setSyntaxMenuOpen(false);
     setSaveMenuOpen(false);
     setEncodingMenuOpen(false);
+    hideTabContextMenu();
   });
   window.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") {
@@ -2126,6 +2637,7 @@ function bindUi() {
       setSyntaxMenuOpen(false);
       setSaveMenuOpen(false);
       setEncodingMenuOpen(false);
+      hideTabContextMenu();
     }
   });
   themeButton.addEventListener("click", () => {
@@ -2189,6 +2701,20 @@ function bindUi() {
     } else if (key === "b") {
       ev.preventDefault();
       explorer?.toggle();
+    } else if (key === "f" && ev.shiftKey) {
+      ev.preventDefault();
+      searchUi?.focus();
+    } else if (key === "z" || key === "y") {
+      const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+      if (tab?.viewMode !== "hex") {
+        return;
+      }
+      ev.preventDefault();
+      if (key === "y" || ev.shiftKey) {
+        hexEditor?.redo();
+      } else {
+        hexEditor?.undo();
+      }
     }
   });
   window.addEventListener("keydown", (ev) => {
@@ -2218,7 +2744,27 @@ async function loadAndRegisterGrammars() {
   }
 }
 
+function disableReleaseContextMenu() {
+  if (!import.meta.env.PROD) {
+    return;
+  }
+  document.addEventListener("contextmenu", (event) => {
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      (target.closest(".monaco-editor") ||
+        target.closest(".tab") ||
+        target.closest("#tab-context-menu"))
+    ) {
+      return;
+    }
+    event.preventDefault();
+  });
+}
+
 async function main() {
+  disableReleaseContextMenu();
+  bindTabContextMenu();
   applyToolbarIcons();
   const titlebarPromise = bindTitlebar();
   const settingsPromise = invoke<AppSettings>("get_settings");
@@ -2253,18 +2799,36 @@ async function main() {
     onOpenFile: (path) => {
       void openPath(path);
     },
+    onPathsRemoved: forgetDeletedExplorerPath,
     onLayout: layoutEditor,
     onPersist: (patch) => {
       void invoke("update_settings", patch).catch((err) => {
         console.warn("failed to save explorer settings", err);
       });
     },
+    onWorkspaceChange: (path) => {
+      searchUi?.setWorkspace(path);
+    },
   });
+  searchUi = bindSearch({
+    explorer: () => explorer,
+    getWorkspace: () => explorer?.getWorkspace() ?? null,
+    onOpenHit: (hit) => {
+      void openSearchHit(hit);
+    },
+    onPersistExclude: (settings) => {
+      void invoke("update_settings", { searchExclude: settings }).catch((err) => {
+        console.warn("failed to save search exclude settings", err);
+      });
+    },
+  });
+  searchUi.applyExcludeSettings(settings.searchExclude);
   void explorer.applyInitial(
     settings.explorerOpen !== false,
     settings.explorerWidth ?? 240,
     settings.workspaceFolder ?? null,
   );
+  searchUi.setWorkspace(settings.workspaceFolder ?? null);
   applyMdSplitRatio(editorHost, mdSplitRatio);
   bindMdGutter({
     host: editorHost,
@@ -2285,7 +2849,7 @@ async function main() {
     preview: mdHost,
     isActive: () => {
       const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-      return !!tab && tabShowsMdPreview(tab);
+      return !!tab && tabMdView(tab) === "split";
     },
   }).fromEditor;
   syncHexButton();
@@ -2316,6 +2880,15 @@ async function main() {
     folding: true,
     foldingStrategy: "indentation",
     showFoldingControls: "mouseover",
+    contextmenu: true,
+    useShadowDOM: false,
+    scrollbar: {
+      verticalScrollbarSize: 8,
+      horizontalScrollbarSize: 8,
+      arrowSize: 0,
+      verticalHasArrows: false,
+      horizontalHasArrows: false,
+    },
     bracketPairColorization: { enabled: true },
     ...monacoIndentOptions(formatIndent),
     find: {
@@ -2323,6 +2896,7 @@ async function main() {
       addExtraSpaceOnTop: false,
     },
   });
+  registerEditorContextMenu();
   settingsUi?.applyFromSettings(
     settings.fontFamily ?? DEFAULT_FONT_FAMILY,
     settings.fontSize ?? DEFAULT_FONT_SIZE,
@@ -2342,11 +2916,12 @@ async function main() {
         return;
       }
       if (kind === "edit") {
-        tab.bytes = hexEditor?.getBytes() ?? tab.bytes;
+        captureHexState(tab);
         tab.textStale = true;
         tab.bytesStale = false;
         forceTabDirty(tab);
         schedulePersistSession();
+        syncEditActions();
       }
       updateStatusBar();
     },
@@ -2361,6 +2936,8 @@ async function main() {
   layoutEditor();
   editor.onDidChangeCursorPosition(() => updateStatusBar());
   editor.onDidChangeCursorSelection(() => syncEditActions());
+  editor.onDidFocusEditorText(() => syncEditActions());
+  editor.onDidBlurEditorText(() => syncEditActions());
   editor.onDidScrollChange(() => {
     syncMdScrollFromEditor?.();
     const tab = activeTabId ? tabs.get(activeTabId) : undefined;

@@ -28,6 +28,8 @@ pub struct SessionTab {
     pub view_mode: Option<String>,
     #[serde(default)]
     pub md_preview: Option<bool>,
+    #[serde(default)]
+    pub md_view: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

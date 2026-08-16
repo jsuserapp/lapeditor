@@ -1,13 +1,19 @@
+mod clipboard;
 mod config;
 mod encoding;
 mod filebytes;
 mod filewatch;
 mod format;
+mod fsops;
 mod languages;
 mod locale;
 mod paths;
+mod search;
 mod session;
+#[cfg(windows)]
+mod webview_clipboard;
 
+use config::SearchExcludeSettings;
 use encoding::TextFile;
 use filewatch::{
     set_explorer_expanded as set_explorer_expanded_impl, stat_text_file as stat_text_file_impl,
@@ -21,7 +27,9 @@ use languages::{
     LanguageCatalogItem, LanguagePlugin, LanguagePluginInfo,
 };
 use locale::{LocaleFile, LocaleInfo};
+use search::{SearchOptions, SearchState};
 use std::path::PathBuf;
+use std::sync::mpsc;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
@@ -29,6 +37,16 @@ fn file_path_to_string(path: tauri_plugin_dialog::FilePath) -> Option<String> {
     path.into_path()
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn read_clipboard() -> Result<String, String> {
+    clipboard::read_text()
+}
+
+#[tauri::command]
+fn write_clipboard(text: String) -> Result<(), String> {
+    clipboard::write_text(&text)
 }
 
 #[tauri::command]
@@ -131,18 +149,60 @@ fn set_explorer_expanded(app: tauri::AppHandle, paths: Vec<String>) {
     set_explorer_expanded_impl(app, paths)
 }
 
-#[tauri::command]
-fn pick_open_file(app: tauri::AppHandle, title: Option<String>) -> Result<Option<String>, String> {
-    let title = title.unwrap_or_else(|| "Open File".into());
-    let file = app.dialog().file().set_title(title).blocking_pick_file();
-    Ok(file.and_then(file_path_to_string))
+fn restore_dialog_owner(window: &tauri::WebviewWindow) {
+    let _ = window.set_enabled(true);
+    let _ = window.set_focus();
+}
+
+async fn recv_dialog_path(
+    window: tauri::WebviewWindow,
+    rx: mpsc::Receiver<Option<String>>,
+) -> Result<Option<String>, String> {
+    let path = tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten())
+        .await
+        .map_err(|e| e.to_string())?;
+    restore_dialog_owner(&window);
+    Ok(path)
 }
 
 #[tauri::command]
-fn pick_open_folder(app: tauri::AppHandle, title: Option<String>) -> Result<Option<String>, String> {
+async fn pick_open_file(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    title: Option<String>,
+) -> Result<Option<String>, String> {
+    let title = title.unwrap_or_else(|| "Open File".into());
+    let (tx, rx) = mpsc::channel();
+    let owner = window.clone();
+    app.dialog()
+        .file()
+        .set_title(title)
+        .set_parent(&window)
+        .pick_file(move |file| {
+            restore_dialog_owner(&owner);
+            let _ = tx.send(file.and_then(file_path_to_string));
+        });
+    recv_dialog_path(window, rx).await
+}
+
+#[tauri::command]
+async fn pick_open_folder(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    title: Option<String>,
+) -> Result<Option<String>, String> {
     let title = title.unwrap_or_else(|| "Open Folder".into());
-    let folder = app.dialog().file().set_title(title).blocking_pick_folder();
-    Ok(folder.and_then(file_path_to_string))
+    let (tx, rx) = mpsc::channel();
+    let owner = window.clone();
+    app.dialog()
+        .file()
+        .set_title(title)
+        .set_parent(&window)
+        .pick_folder(move |folder| {
+            restore_dialog_owner(&owner);
+            let _ = tx.send(folder.and_then(file_path_to_string));
+        });
+    recv_dialog_path(window, rx).await
 }
 
 #[derive(serde::Serialize)]
@@ -151,6 +211,36 @@ struct DirEntryDto {
     name: String,
     path: String,
     is_dir: bool,
+}
+
+#[tauri::command]
+fn cancel_workspace_search(app: tauri::AppHandle) {
+    search::cancel_search(app.state::<SearchState>().inner());
+}
+
+#[tauri::command]
+fn search_workspace(
+    app: tauri::AppHandle,
+    request_id: u64,
+    root: String,
+    query: String,
+    match_case: bool,
+    whole_word: bool,
+    use_regex: bool,
+    excludes: SearchExcludeSettings,
+) -> Result<(), String> {
+    search::start_search(
+        app,
+        request_id,
+        root,
+        query,
+        SearchOptions {
+            match_case,
+            whole_word,
+            use_regex,
+            excludes,
+        },
+    )
 }
 
 #[tauri::command]
@@ -182,22 +272,46 @@ fn list_dir_entries(path: String) -> Result<Vec<DirEntryDto>, String> {
 }
 
 #[tauri::command]
-fn pick_save_file(
+fn create_fs_entry(
     app: tauri::AppHandle,
+    parent: String,
+    name: String,
+    is_dir: bool,
+) -> Result<String, String> {
+    let path = fsops::create_fs_entry(parent, name, is_dir)?;
+    filewatch::mark_self_write(&app.state::<FileWatchState>(), &path);
+    Ok(path)
+}
+
+#[tauri::command]
+fn delete_fs_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    filewatch::mark_self_write(&app.state::<FileWatchState>(), &path);
+    fsops::delete_fs_entry(path)
+}
+
+#[tauri::command]
+async fn pick_save_file(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     default_name: Option<String>,
     directory: Option<String>,
     title: Option<String>,
 ) -> Result<Option<String>, String> {
     let title = title.unwrap_or_else(|| "Save File".into());
-    let mut builder = app.dialog().file().set_title(title);
+    let mut builder = app.dialog().file().set_title(title).set_parent(&window);
     if let Some(dir) = directory.filter(|d| !d.is_empty()) {
         builder = builder.set_directory(dir);
     }
     if let Some(name) = default_name.filter(|n| !n.is_empty()) {
         builder = builder.set_file_name(name);
     }
-    let file = builder.blocking_save_file();
-    Ok(file.and_then(file_path_to_string))
+    let (tx, rx) = mpsc::channel();
+    let owner = window.clone();
+    builder.save_file(move |file| {
+        restore_dialog_owner(&owner);
+        let _ = tx.send(file.and_then(file_path_to_string));
+    });
+    recv_dialog_path(window, rx).await
 }
 
 #[tauri::command]
@@ -237,6 +351,7 @@ fn update_settings(
     workspace_folder: Option<String>,
     font_family: Option<String>,
     font_size: Option<f64>,
+    search_exclude: Option<SearchExcludeSettings>,
 ) -> Result<config::Settings, String> {
     config::update_settings(
         locale,
@@ -247,6 +362,7 @@ fn update_settings(
         workspace_folder,
         font_family,
         font_size,
+        search_exclude,
     )
 }
 
@@ -364,7 +480,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(FileWatchState::new())
+        .manage(SearchState::new())
         .invoke_handler(tauri::generate_handler![
+            read_clipboard,
+            write_clipboard,
             list_language_plugins,
             load_language_grammars,
             list_language_catalog,
@@ -384,6 +503,10 @@ pub fn run() {
             pick_open_file,
             pick_open_folder,
             list_dir_entries,
+            create_fs_entry,
+            delete_fs_entry,
+            search_workspace,
+            cancel_workspace_search,
             pick_save_file,
             language_id_for_path,
             get_settings,
@@ -412,6 +535,7 @@ pub fn run() {
                 {
                     let _ = window.set_decorations(false);
                     let _ = window.set_shadow(true);
+                    webview_clipboard::allow_clipboard_read(&window);
                 }
                 config::restore_window_state(&window);
                 let _ = window.set_zoom(config::load_settings().zoom);

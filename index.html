@@ -18,7 +18,7 @@
               </button>
               <div id="locale-menu" class="popover-menu" hidden role="menu"></div>
             </div>
-            <button type="button" id="btn-theme" class="toolbar-icon-btn" aria-label="Theme"></button>
+            <button type="button" id="btn-theme" class="toolbar-icon-btn" aria-label="Light theme" aria-pressed="false"></button>
           </div>
           <div id="window-controls" class="window-controls" hidden>
             <button type="button" id="win-min" data-i18n-title="window.minimize"></button>
@@ -68,6 +68,9 @@
             <button type="button" id="btn-md" class="toolbar-icon-btn" data-i18n-title="toolbar.mdTitle" aria-pressed="false">
               <img class="toolbar-btn-icon" src="./src/assets/icons/md.png" alt="" />
             </button>
+            <button type="button" id="btn-read" class="toolbar-icon-btn" data-i18n-title="toolbar.readTitle" aria-pressed="false">
+              <img class="toolbar-btn-icon" src="./src/assets/icons/open-book.png" alt="" />
+            </button>
           </div>
           <div class="toolbar-sep" aria-hidden="true"></div>
           <div class="toolbar-group">
@@ -114,18 +117,58 @@
           <button type="button" id="btn-explorer" class="activity-btn" aria-pressed="false" data-i18n-title="explorer.toggle">
             <img class="activity-btn-icon" src="./src/assets/icons/documents.png" alt="" />
           </button>
+          <button type="button" id="btn-search" class="activity-btn" aria-pressed="false" data-i18n-title="search.toggle">
+            <img class="activity-btn-icon" src="./src/assets/icons/search.png" alt="" />
+          </button>
           <button type="button" id="btn-settings" class="activity-btn activity-btn-end" aria-pressed="false" data-i18n-title="settings.toggle">
             <img class="activity-btn-icon" src="./src/assets/icons/gear.png" alt="" />
           </button>
         </aside>
         <aside id="sidebar" hidden>
-          <div class="sidebar-header">
-            <span id="sidebar-title" data-i18n="explorer.title">Explorer</span>
-            <button type="button" id="btn-explorer-folder" class="sidebar-icon-btn" data-i18n-title="explorer.openFolderTitle">
-              <img src="./src/assets/icons/opened-folder.png" alt="" />
-            </button>
+          <div id="explorer-panel" class="sidebar-panel">
+            <div class="sidebar-header">
+              <span id="sidebar-title" data-i18n="explorer.title">Explorer</span>
+              <div class="sidebar-actions">
+                <button type="button" id="btn-explorer-new-file" class="sidebar-icon-btn" data-i18n-title="explorer.newFileTitle" disabled>
+                  <img class="sidebar-btn-icon" src="./src/assets/icons/add-file.png" alt="" />
+                </button>
+                <button type="button" id="btn-explorer-new-folder" class="sidebar-icon-btn" data-i18n-title="explorer.newFolderTitle" disabled>
+                  <img class="sidebar-btn-icon" src="./src/assets/icons/add-folder.png" alt="" />
+                </button>
+                <button type="button" id="btn-explorer-delete" class="sidebar-icon-btn" data-i18n-title="explorer.deleteTitle" disabled>
+                  <img class="sidebar-btn-icon" src="./src/assets/icons/close.png" alt="" />
+                </button>
+                <button type="button" id="btn-explorer-folder" class="sidebar-icon-btn" data-i18n-title="explorer.openFolderTitle">
+                  <img src="./src/assets/icons/opened-folder.png" alt="" />
+                </button>
+              </div>
+            </div>
+            <div id="explorer-tree" class="explorer-tree"></div>
           </div>
-          <div id="explorer-tree" class="explorer-tree"></div>
+          <div id="search-panel" class="sidebar-panel" hidden>
+            <div class="sidebar-header">
+              <span id="search-title" data-i18n="search.title">Search</span>
+            </div>
+            <div class="search-form">
+              <div class="search-input-row">
+                <input id="search-query" type="text" spellcheck="false" autocomplete="off" data-i18n-placeholder="search.placeholder" />
+                <div class="search-opt-group" role="group">
+                  <button type="button" id="search-opt-case" class="search-opt-btn" aria-pressed="false" data-i18n-title="search.matchCase">Aa</button>
+                  <button type="button" id="search-opt-word" class="search-opt-btn" aria-pressed="false" data-i18n-title="search.wholeWord">ab</button>
+                  <button type="button" id="search-opt-regex" class="search-opt-btn" aria-pressed="false" data-i18n-title="search.regex">.*</button>
+                </div>
+              </div>
+              <div class="search-exclude-row">
+                <label class="search-exclude-toggle">
+                  <input id="search-use-excludes" type="checkbox" checked />
+                  <span data-i18n="search.useExcludes">Use exclude settings and ignore files</span>
+                </label>
+                <button type="button" id="search-exclude-settings" class="search-exclude-gear" data-i18n-title="search.excludeSettingsTitle" aria-label="Search exclude settings"></button>
+              </div>
+              <div id="search-status" class="search-status" aria-live="polite"></div>
+            </div>
+            <div id="search-results" class="search-results"></div>
+          </div>
         </aside>
         <div id="sidebar-gutter" hidden></div>
         <div id="center">
@@ -252,6 +295,21 @@
         </div>
       </div>
     </div>
+    <div id="name-dialog" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="name-dialog-title">
+        <h2 id="name-dialog-title"></h2>
+        <p id="name-dialog-hint" class="modal-hint"></p>
+        <label class="modal-field">
+          <span id="name-dialog-label"></span>
+          <input id="name-dialog-input" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <p id="name-dialog-error" class="modal-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" id="name-dialog-cancel" data-i18n="dialog.cancel">Cancel</button>
+          <button type="button" id="name-dialog-confirm" class="modal-primary" data-i18n="dialog.ok">OK</button>
+        </div>
+      </div>
+    </div>
     <div id="confirm-dialog" class="modal-backdrop confirm-backdrop" hidden>
       <div class="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
         <div class="confirm-head">
@@ -261,6 +319,51 @@
         <p id="confirm-message" class="confirm-message"></p>
         <div id="confirm-actions" class="modal-actions"></div>
       </div>
+    </div>
+    <div id="search-exclude-dialog" class="modal-backdrop" hidden>
+      <div class="modal search-exclude-modal" role="dialog" aria-modal="true" aria-labelledby="search-exclude-title">
+        <h2 id="search-exclude-title" data-i18n="search.excludeSettingsTitle">Search exclude settings</h2>
+        <p class="modal-hint" data-i18n="search.excludeSettingsHint">These rules apply when “Use exclude settings” is enabled.</p>
+        <div class="search-exclude-sections">
+          <section class="search-exclude-section">
+            <h3 data-i18n="search.excludeIgnoreRules">Ignore rules</h3>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-hidden" checked /> <span data-i18n="search.excludeHidden">Skip hidden files and folders (dot names)</span></label>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-gitignore" checked /> <span data-i18n="search.excludeGitignore">Respect .gitignore</span></label>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-ignore-file" checked /> <span data-i18n="search.excludeIgnoreFile">Respect .ignore</span></label>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-git-exclude" checked /> <span data-i18n="search.excludeGitExclude">Respect .git/info/exclude</span></label>
+          </section>
+          <section class="search-exclude-section">
+            <h3 data-i18n="search.excludeBuiltins">Built-in folders</h3>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-deps" checked /> <span data-i18n="search.excludeDeps">Dependencies (node_modules, bower_components, vendor)</span></label>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-build" checked /> <span data-i18n="search.excludeBuild">Build outputs (dist, build, out, target, .next, coverage)</span></label>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-vcs" checked /> <span data-i18n="search.excludeVcs">Git / Mercurial (.git, .hg)</span></label>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-svn" checked /> <span data-i18n="search.excludeSvn">Subversion (.svn)</span></label>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-ide" checked /> <span data-i18n="search.excludeIde">IDE folders (.idea, .vscode, .vs, .cursor)</span></label>
+            <label class="search-exclude-check"><input type="checkbox" id="sx-os" checked /> <span data-i18n="search.excludeOs">OS junk (.DS_Store, Thumbs.db)</span></label>
+          </section>
+          <section class="search-exclude-section">
+            <h3 data-i18n="search.excludeCustom">Custom exclude folders</h3>
+            <p class="modal-hint" data-i18n="search.excludeCustomHint">Folder name (e.g. tmp) or relative path (e.g. docs/generated).</p>
+            <div class="search-exclude-custom-row">
+              <input id="sx-custom-input" type="text" spellcheck="false" autocomplete="off" data-i18n-placeholder="search.excludeCustomPlaceholder" />
+              <button type="button" id="sx-custom-add" class="modal-primary" data-i18n="search.excludeCustomAdd">Add</button>
+            </div>
+            <p id="sx-custom-error" class="modal-error" hidden></p>
+            <ul id="sx-custom-list" class="search-exclude-custom-list"></ul>
+          </section>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="sx-cancel" data-i18n="dialog.cancel">Cancel</button>
+          <button type="button" id="sx-save" class="modal-primary" data-i18n="dialog.ok">OK</button>
+        </div>
+      </div>
+    </div>
+    <div id="tab-context-menu" class="popover-menu tab-context-menu" hidden role="menu">
+      <button type="button" id="tab-ctx-full-path" class="popover-item" role="menuitem" data-i18n="tab.copyFullPath">Copy Full Path</button>
+      <button type="button" id="tab-ctx-rel-path" class="popover-item" role="menuitem" data-i18n="tab.copyRelativePath">Copy Relative Path</button>
+      <button type="button" id="tab-ctx-file-name" class="popover-item" role="menuitem" data-i18n="tab.copyFileName">Copy File Name</button>
+      <div class="popover-sep" role="separator"></div>
+      <button type="button" id="tab-ctx-close" class="popover-item" role="menuitem" data-i18n="tab.close">Close</button>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

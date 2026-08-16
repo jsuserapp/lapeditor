@@ -28,7 +28,7 @@ export default defineConfig(async () => ({
     ],
   },
   build: {
-    chunkSizeWarningLimit: 1500,
+    chunkSizeWarningLimit: 5000,
   },
   server: {
     port: 1420,

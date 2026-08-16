@@ -14,10 +14,6 @@ const SUN_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="t
   <rect x="11" y="1.6" width="2" height="3.8" rx="1" transform="rotate(315 12 12)"/>
 </svg>`;
 
-const MOON_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="currentColor">
-  <path d="M12.8 2.2a8.8 8.8 0 1 0 9 10.4 7.2 7.2 0 0 1-9-10.4z"/>
-</svg>`;
-
 export function monacoThemeName(theme: ThemeId): string {
   return theme === "light" ? "lapeditor-light" : "lapeditor-dark";
 }
@@ -90,8 +86,8 @@ export function applyEditorTheme(monaco: typeof Monaco, theme: ThemeId) {
   monaco.editor.setTheme(monacoThemeName(theme));
 }
 
-export function themeButtonIcon(theme: ThemeId): string {
-  return theme === "dark" ? SUN_ICON : MOON_ICON;
+export function themeButtonIcon(): string {
+  return SUN_ICON;
 }
 
 const WRAP_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">

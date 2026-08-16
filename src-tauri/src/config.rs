@@ -3,6 +3,95 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchExcludeSettings {
+    /// Master switch: when false, none of the rules below apply.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub skip_hidden: bool,
+    #[serde(default = "default_true")]
+    pub use_gitignore: bool,
+    #[serde(default = "default_true")]
+    pub use_ignore_file: bool,
+    #[serde(default = "default_true")]
+    pub use_git_exclude: bool,
+    #[serde(default = "default_true")]
+    pub skip_dependencies: bool,
+    #[serde(default = "default_true")]
+    pub skip_build: bool,
+    /// Skip Git / Mercurial metadata dirs (`.git`, `.hg`).
+    #[serde(default = "default_true")]
+    pub skip_vcs: bool,
+    /// Skip Subversion metadata (`.svn`).
+    #[serde(default = "default_true")]
+    pub skip_svn: bool,
+    #[serde(default = "default_true")]
+    pub skip_ide: bool,
+    #[serde(default = "default_true")]
+    pub skip_os_junk: bool,
+    #[serde(default)]
+    pub custom_dirs: Vec<String>,
+}
+
+impl Default for SearchExcludeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            skip_hidden: true,
+            use_gitignore: true,
+            use_ignore_file: true,
+            use_git_exclude: true,
+            skip_dependencies: true,
+            skip_build: true,
+            skip_vcs: true,
+            skip_svn: true,
+            skip_ide: true,
+            skip_os_junk: true,
+            custom_dirs: Vec::new(),
+        }
+    }
+}
+
+impl SearchExcludeSettings {
+    pub fn normalized(mut self) -> Self {
+        let mut seen = std::collections::HashSet::new();
+        self.custom_dirs = self
+            .custom_dirs
+            .into_iter()
+            .filter_map(|raw| {
+                let name = normalize_custom_dir(&raw)?;
+                if seen.insert(name.to_ascii_lowercase()) {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .take(64)
+            .collect();
+        self
+    }
+}
+
+fn normalize_custom_dir(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_matches(|c| c == '/' || c == '\\');
+    if trimmed.is_empty() || trimmed.len() > 120 {
+        return None;
+    }
+    if trimmed == "." || trimmed == ".." || trimmed.contains("..") {
+        return None;
+    }
+    if trimmed.chars().any(|c| c.is_control() || c == '<' || c == '>' || c == '|' || c == '\0') {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -24,6 +113,8 @@ pub struct Settings {
     pub font_family: String,
     #[serde(default = "default_font_size")]
     pub font_size: f64,
+    #[serde(default)]
+    pub search_exclude: SearchExcludeSettings,
 }
 
 fn default_zoom() -> f64 {
@@ -70,6 +161,7 @@ impl Default for Settings {
             workspace_folder: None,
             font_family: default_font_family(),
             font_size: default_font_size(),
+            search_exclude: SearchExcludeSettings::default(),
         }
     }
 }
@@ -129,6 +221,7 @@ pub fn load_settings() -> Settings {
     if !(settings.font_size >= 10.0 && settings.font_size <= 28.0) {
         settings.font_size = default_font_size();
     }
+    settings.search_exclude = settings.search_exclude.normalized();
     settings
 }
 
@@ -141,6 +234,7 @@ pub fn update_settings(
     workspace_folder: Option<String>,
     font_family: Option<String>,
     font_size: Option<f64>,
+    search_exclude: Option<SearchExcludeSettings>,
 ) -> Result<Settings, String> {
     let mut settings = load_settings();
     if let Some(locale) = locale {
@@ -184,6 +278,9 @@ pub fn update_settings(
         if font_size >= 10.0 && font_size <= 28.0 {
             settings.font_size = font_size.round();
         }
+    }
+    if let Some(search_exclude) = search_exclude {
+        settings.search_exclude = search_exclude.normalized();
     }
     save_settings(&settings)?;
     Ok(settings)
