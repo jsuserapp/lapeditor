@@ -42,6 +42,7 @@ type ExplorerHost = {
   }) => void;
   onViewChange?: (view: SidebarView) => void;
   onWorkspaceChange?: (path: string | null) => void;
+  isProtectedPath?: (path: string) => boolean;
 };
 
 function pathKey(path: string) {
@@ -84,6 +85,9 @@ function explorerActionError(err: unknown): string {
   }
   if (raw === "not_found") {
     return t("explorer.errNotFound");
+  }
+  if (raw === "session-cache") {
+    return t("explorer.errProtected");
   }
   return t("explorer.errFailed", { error: raw.replace(/^io:\s*/i, "") });
 }
@@ -134,6 +138,10 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
   const newFileBtn = document.querySelector<HTMLButtonElement>("#btn-explorer-new-file")!;
   const newFolderBtn = document.querySelector<HTMLButtonElement>("#btn-explorer-new-folder")!;
   const deleteBtn = document.querySelector<HTMLButtonElement>("#btn-explorer-delete")!;
+  const treeMenu = document.querySelector<HTMLDivElement>("#explorer-context-menu")!;
+  const treeMenuOpen = document.querySelector<HTMLButtonElement>("#explorer-ctx-open-folder")!;
+  const treeMenuDelete = document.querySelector<HTMLButtonElement>("#explorer-ctx-delete")!;
+  const treeMenuSep = treeMenu.querySelector<HTMLElement>(".popover-sep");
 
   let open = false;
   let view: SidebarView = "explorer";
@@ -147,6 +155,7 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
   const refreshTimers = new Map<string, number>();
   let watchTimer: number | undefined;
   let expandedTimer: number | undefined;
+  let menuTarget: { path: string; isDir: boolean } | null = null;
 
   const applyView = (next: SidebarView) => {
     view = next;
@@ -155,6 +164,9 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
     toggleBtn.setAttribute("aria-pressed", open && view === "explorer" ? "true" : "false");
     searchBtn.setAttribute("aria-pressed", open && view === "search" ? "true" : "false");
     host.onViewChange?.(view);
+    if (view !== "explorer") {
+      hideTreeContextMenu();
+    }
   };
 
   const applyOpen = (next: boolean) => {
@@ -170,6 +182,9 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
       searchBtn.setAttribute("aria-pressed", "false");
     }
     host.onLayout();
+    if (!open) {
+      hideTreeContextMenu();
+    }
   };
 
   const persist = (patch: {
@@ -180,12 +195,20 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
     host.onPersist(patch);
   };
 
+  const isProtected = (path: string | null | undefined) => {
+    return !!path && !!host.isProtectedPath?.(path);
+  };
+
   const syncExplorerActions = () => {
     const hasSel = !!workspace && !!selected;
-    const folderSel = hasSel && selectedIsDir;
+    const protectedSel = isProtected(selected);
+    const folderSel = hasSel && selectedIsDir && !protectedSel;
     newFileBtn.disabled = !folderSel;
     newFolderBtn.disabled = !folderSel;
-    deleteBtn.disabled = !hasSel;
+    deleteBtn.disabled = !hasSel || protectedSel;
+    setTooltip(newFileBtn, protectedSel ? t("explorer.protected") : t("explorer.newFileTitle"));
+    setTooltip(newFolderBtn, protectedSel ? t("explorer.protected") : t("explorer.newFolderTitle"));
+    setTooltip(deleteBtn, protectedSel ? t("explorer.protected") : t("explorer.deleteTitle"));
   };
 
   const renderEmpty = () => {
@@ -221,11 +244,12 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
     node.dataset.path = entry.path;
     node.style.setProperty("--tree-depth", String(depth));
 
+    const protectedEntry = isProtected(entry.path);
     const row = document.createElement("div");
     row.className = `tree-row${entry.isDir ? " dir" : " file"}${
       selected && pathKey(selected) === key ? " active" : ""
-    }`;
-    row.title = entry.name;
+    }${protectedEntry ? " protected" : ""}`;
+    row.title = protectedEntry ? `${entry.name} · ${t("explorer.protected")}` : entry.name;
 
     const twist = document.createElement("span");
     twist.className = "tree-twist";
@@ -246,6 +270,11 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
       if (onTwist || !expanded.has(key)) {
         void toggleDir(entry.path, node, depth);
       }
+    });
+    row.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      showTreeContextMenu(entry, ev.clientX, ev.clientY);
     });
 
     if (entry.isDir && expanded.has(key)) {
@@ -484,7 +513,7 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
   };
 
   const createInSelection = async (isDir: boolean) => {
-    if (!selected || !selectedIsDir) {
+    if (!selected || !selectedIsDir || isProtected(selected)) {
       return;
     }
     const folder = selected;
@@ -510,12 +539,47 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
     });
   };
 
-  const deleteSelection = async () => {
-    if (!selected || !workspace) {
+  const hideTreeContextMenu = () => {
+    treeMenu.hidden = true;
+    menuTarget = null;
+  };
+
+  const showTreeContextMenu = (entry: DirEntryDto, clientX: number, clientY: number) => {
+    const mdMenu = document.querySelector<HTMLDivElement>("#md-preview-context-menu");
+    if (mdMenu) {
+      mdMenu.hidden = true;
+    }
+    menuTarget = { path: entry.path, isDir: entry.isDir };
+    const protectedEntry = isProtected(entry.path);
+    treeMenuDelete.hidden = protectedEntry;
+    treeMenuDelete.disabled = protectedEntry;
+    if (treeMenuSep) {
+      treeMenuSep.hidden = protectedEntry;
+    }
+    treeMenuOpen.textContent = entry.isDir
+      ? t("explorer.openInFileManager")
+      : t("explorer.openContainingFolder");
+    treeMenu.hidden = false;
+    const pad = 8;
+    const rect = treeMenu.getBoundingClientRect();
+    const left = Math.min(clientX, window.innerWidth - rect.width - pad);
+    const top = Math.min(clientY, window.innerHeight - rect.height - pad);
+    treeMenu.style.left = `${Math.max(pad, left)}px`;
+    treeMenu.style.top = `${Math.max(pad, top)}px`;
+  };
+
+  const openInFileManager = async (path: string, isDir: boolean) => {
+    try {
+      await invoke("open_in_file_manager", { path, isDir });
+    } catch (err) {
+      console.warn("failed to open in file manager", err);
+    }
+  };
+
+  const deleteEntry = async (target: string, isDir: boolean) => {
+    if (!workspace || isProtected(target)) {
       return;
     }
-    const target = selected;
-    const isDir = selectedIsDir;
     const name = basename(target);
     const result = await confirmDialog({
       title: isDir ? t("explorer.deleteFolderTitle") : t("explorer.deleteFileTitle"),
@@ -551,8 +615,15 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
       return;
     }
     const parent = parentPath(target) || workspace;
-    selected = parent;
-    selectedIsDir = true;
+    const selKey = selected ? pathKey(selected) : "";
+    const removedKey = pathKey(target);
+    const selectionAffected =
+      !!selKey &&
+      (selKey === removedKey || (isDir && selKey.startsWith(`${removedKey}/`)));
+    if (selectionAffected) {
+      selected = parent;
+      selectedIsDir = true;
+    }
     expanded.delete(pathKey(target));
     children.delete(pathKey(target));
     dirPaths.delete(pathKey(target));
@@ -566,6 +637,13 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
     renderTree();
     scheduleExpanded();
     syncExplorerActions();
+  };
+
+  const deleteSelection = async () => {
+    if (!selected || !workspace) {
+      return;
+    }
+    await deleteEntry(selected, selectedIsDir);
   };
 
   const pickFolder = async () => {
@@ -640,9 +718,7 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
   const syncLocale = () => {
     setTooltip(toggleBtn, t("explorer.toggle"));
     setTooltip(folderBtn, t("explorer.openFolderTitle"));
-    setTooltip(newFileBtn, t("explorer.newFileTitle"));
-    setTooltip(newFolderBtn, t("explorer.newFolderTitle"));
-    setTooltip(deleteBtn, t("explorer.deleteTitle"));
+    syncExplorerActions();
     if (!workspace) {
       renderEmpty();
     }
@@ -662,6 +738,32 @@ export function bindExplorer(host: ExplorerHost): ExplorerApi {
   newFileBtn.addEventListener("click", () => void createInSelection(false));
   newFolderBtn.addEventListener("click", () => void createInSelection(true));
   deleteBtn.addEventListener("click", () => void deleteSelection());
+  treeMenuOpen.addEventListener("click", () => {
+    const target = menuTarget;
+    hideTreeContextMenu();
+    if (target) {
+      void openInFileManager(target.path, target.isDir);
+    }
+  });
+  treeMenuDelete.addEventListener("click", () => {
+    const target = menuTarget;
+    hideTreeContextMenu();
+    if (target) {
+      void deleteEntry(target.path, target.isDir);
+    }
+  });
+  document.addEventListener("pointerdown", (ev) => {
+    if (treeMenu.hidden) {
+      return;
+    }
+    const node = ev.target;
+    if (node instanceof Node && treeMenu.contains(node)) {
+      return;
+    }
+    hideTreeContextMenu();
+  });
+  window.addEventListener("blur", () => hideTreeContextMenu());
+  window.addEventListener("resize", () => hideTreeContextMenu());
   syncExplorerActions();
 
   let dragging = false;

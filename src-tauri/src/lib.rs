@@ -50,6 +50,16 @@ fn write_clipboard(text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn write_clipboard_image(width: u32, height: u32, data: String) -> Result<(), String> {
+    clipboard::write_image_rgba_base64(width, height, &data)
+}
+
+#[tauri::command]
+fn write_clipboard_image_file(path: String) -> Result<(), String> {
+    clipboard::write_image_file(&path)
+}
+
+#[tauri::command]
 fn list_language_plugins(app: tauri::AppHandle) -> Result<Vec<LanguagePluginInfo>, String> {
     list_language_plugin_info(&app)
 }
@@ -86,6 +96,7 @@ fn write_text_file(
     contents: String,
     encoding: Option<String>,
 ) -> Result<(), String> {
+    paths::deny_if_session_path(&path)?;
     let state = app.state::<FileWatchState>();
     filewatch::mark_self_write(&state, &path);
     encoding::write_text_file(&path, &contents, encoding.as_deref().unwrap_or("utf-8"))
@@ -109,6 +120,7 @@ fn write_file_bytes(
     tail_offset: Option<u64>,
     tail_from: Option<String>,
 ) -> Result<(), String> {
+    paths::deny_if_session_path(&path)?;
     let state = app.state::<FileWatchState>();
     filewatch::mark_self_write(&state, &path);
     filebytes::write_file_bytes(&path, &data, tail_offset, tail_from.as_deref())
@@ -170,18 +182,22 @@ async fn pick_open_file(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     title: Option<String>,
+    image_only: Option<bool>,
 ) -> Result<Option<String>, String> {
     let title = title.unwrap_or_else(|| "Open File".into());
     let (tx, rx) = mpsc::channel();
     let owner = window.clone();
-    app.dialog()
-        .file()
-        .set_title(title)
-        .set_parent(&window)
-        .pick_file(move |file| {
-            restore_dialog_owner(&owner);
-            let _ = tx.send(file.and_then(file_path_to_string));
-        });
+    let mut builder = app.dialog().file().set_title(title).set_parent(&window);
+    if image_only.unwrap_or(false) {
+        builder = builder.add_filter(
+            "Images",
+            &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"],
+        );
+    }
+    builder.pick_file(move |file| {
+        restore_dialog_owner(&owner);
+        let _ = tx.send(file.and_then(file_path_to_string));
+    });
     recv_dialog_path(window, rx).await
 }
 
@@ -256,10 +272,11 @@ fn list_dir_entries(path: String) -> Result<Vec<DirEntryDto>, String> {
         if name == "." || name == ".." {
             continue;
         }
-        let file_type = entry.file_type().map_err(|e| format!("stat {}: {e}", entry.path().display()))?;
+        let child = entry.path();
+        let file_type = entry.file_type().map_err(|e| format!("stat {}: {e}", child.display()))?;
         entries.push(DirEntryDto {
             name,
-            path: entry.path().to_string_lossy().into_owned(),
+            path: child.to_string_lossy().into_owned(),
             is_dir: file_type.is_dir(),
         });
     }
@@ -278,6 +295,9 @@ fn create_fs_entry(
     name: String,
     is_dir: bool,
 ) -> Result<String, String> {
+    paths::deny_if_session_path(&parent)?;
+    let tentative = PathBuf::from(&parent).join(name.trim());
+    paths::deny_if_session_path(&tentative.to_string_lossy())?;
     let path = fsops::create_fs_entry(parent, name, is_dir)?;
     filewatch::mark_self_write(&app.state::<FileWatchState>(), &path);
     Ok(path)
@@ -285,8 +305,52 @@ fn create_fs_entry(
 
 #[tauri::command]
 fn delete_fs_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    paths::deny_if_session_path(&path)?;
     filewatch::mark_self_write(&app.state::<FileWatchState>(), &path);
     fsops::delete_fs_entry(path)
+}
+
+#[tauri::command]
+fn open_in_file_manager(app: tauri::AppHandle, path: String, is_dir: bool) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let opener = app.opener();
+    if is_dir {
+        opener
+            .open_path(&path, None::<&str>)
+            .map_err(|e| e.to_string())
+    } else {
+        opener.reveal_item_in_dir(&path).map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+fn clipboard_has_image() -> Result<bool, String> {
+    clipboard::has_image()
+}
+
+#[tauri::command]
+fn save_clipboard_markdown_image(
+    app: tauri::AppHandle,
+    markdown_path: String,
+    stem: String,
+) -> Result<Option<String>, String> {
+    let Some(png) = clipboard::read_image_png()? else {
+        return Ok(None);
+    };
+    let saved = fsops::save_markdown_image_bytes(markdown_path, png, "png", &stem)?;
+    filewatch::mark_self_write(&app.state::<FileWatchState>(), &saved.absolute_path);
+    Ok(Some(saved.relative_path))
+}
+
+#[tauri::command]
+fn import_markdown_image(
+    app: tauri::AppHandle,
+    markdown_path: String,
+    source_path: String,
+) -> Result<String, String> {
+    let saved = fsops::import_markdown_image(markdown_path, source_path)?;
+    filewatch::mark_self_write(&app.state::<FileWatchState>(), &saved.absolute_path);
+    Ok(saved.relative_path)
 }
 
 #[tauri::command]
@@ -352,6 +416,8 @@ fn update_settings(
     font_family: Option<String>,
     font_size: Option<f64>,
     search_exclude: Option<SearchExcludeSettings>,
+    word_wrap: Option<bool>,
+    recycle_bin_size: Option<u32>,
 ) -> Result<config::Settings, String> {
     config::update_settings(
         locale,
@@ -363,6 +429,8 @@ fn update_settings(
         font_family,
         font_size,
         search_exclude,
+        word_wrap,
+        recycle_bin_size,
     )
 }
 
@@ -404,13 +472,21 @@ fn uses_custom_titlebar() -> bool {
 }
 
 #[tauri::command]
+fn session_dir() -> String {
+    paths::session_dir().to_string_lossy().into_owned()
+}
+
+#[tauri::command]
 fn load_session() -> session::Session {
     session::load_session()
 }
 
 #[tauri::command]
-fn save_session(session: session::Session) -> Result<(), String> {
-    session::save_session(session)
+fn save_session(
+    session: session::Session,
+    contents: Option<std::collections::HashMap<String, String>>,
+) -> Result<(), String> {
+    session::save_session(session, contents)
 }
 
 #[tauri::command]
@@ -484,6 +560,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_clipboard,
             write_clipboard,
+            write_clipboard_image,
+            write_clipboard_image_file,
             list_language_plugins,
             load_language_grammars,
             list_language_catalog,
@@ -505,6 +583,10 @@ pub fn run() {
             list_dir_entries,
             create_fs_entry,
             delete_fs_entry,
+            open_in_file_manager,
+            clipboard_has_image,
+            save_clipboard_markdown_image,
+            import_markdown_image,
             search_workspace,
             cancel_workspace_search,
             pick_save_file,
@@ -517,6 +599,7 @@ pub fn run() {
             zoom_by,
             save_window_state,
             uses_custom_titlebar,
+            session_dir,
             load_session,
             save_session,
             get_formatter_config,

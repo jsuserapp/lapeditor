@@ -25,6 +25,8 @@ export default defineConfig(async () => ({
       "monaco-editor/editor/editor.api.js",
       "vscode-textmate",
       "vscode-oniguruma",
+      "pdfjs-dist",
+      "fflate",
     ],
   },
   build: {

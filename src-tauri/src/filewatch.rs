@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 pub struct FileStat {
     pub mtime_ms: u64,
     pub size: u64,
+    pub readonly: bool,
 }
 
 struct WatchRuntime {
@@ -98,6 +99,7 @@ pub fn stat_text_file(path: &str) -> Result<FileStat, String> {
     Ok(FileStat {
         mtime_ms,
         size: meta.len(),
+        readonly: meta.permissions().readonly(),
     })
 }
 
@@ -188,7 +190,7 @@ pub fn watch_text_files(app: AppHandle, paths: Vec<String>) -> Result<(), String
         let mut seen = HashSet::new();
         paths
             .into_iter()
-            .filter(|p| !p.is_empty() && seen.insert(path_key(Path::new(p))))
+            .filter(|p| !p.is_empty() && !crate::paths::is_session_path(Path::new(p)) && seen.insert(path_key(Path::new(p))))
             .collect()
     };
 

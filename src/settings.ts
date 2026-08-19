@@ -6,6 +6,8 @@ export const DEFAULT_FONT_FAMILY = "Cascadia Code, Consolas, 'Courier New', mono
 export const DEFAULT_FONT_SIZE = 14;
 export const FONT_SIZE_MIN = 10;
 export const FONT_SIZE_MAX = 28;
+export const DEFAULT_RECYCLE_BIN_SIZE = 10;
+export const RECYCLE_BIN_SIZE_MAX = 50;
 
 const FONT_PRESETS = [
   "Cascadia Code",
@@ -31,6 +33,13 @@ export function normalizeFontSize(value: number | undefined): number {
   return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Math.round(value as number)));
 }
 
+export function normalizeRecycleBinSize(value: number | undefined): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_RECYCLE_BIN_SIZE;
+  }
+  return Math.min(RECYCLE_BIN_SIZE_MAX, Math.max(0, Math.round(value as number)));
+}
+
 export function applyEditorFont(
   editor: monaco.editor.IStandaloneCodeEditor | undefined,
   fontFamily: string,
@@ -44,14 +53,14 @@ export function applyEditorFont(
 
 type SettingsHost = {
   getEditor: () => monaco.editor.IStandaloneCodeEditor | undefined;
-  onPersist: (patch: { fontFamily?: string; fontSize?: number }) => void;
+  onPersist: (patch: { fontFamily?: string; fontSize?: number; recycleBinSize?: number }) => void;
 };
 
 export type SettingsApi = {
   setOpen: (open: boolean) => void;
   isOpen: () => boolean;
   syncLocale: () => void;
-  applyFromSettings: (fontFamily?: string, fontSize?: number) => void;
+  applyFromSettings: (fontFamily?: string, fontSize?: number, recycleBinSize?: number) => void;
 };
 
 export function bindSettings(host: SettingsHost): SettingsApi {
@@ -59,11 +68,13 @@ export function bindSettings(host: SettingsHost): SettingsApi {
   const button = document.querySelector<HTMLButtonElement>("#btn-settings")!;
   const familyInput = document.querySelector<HTMLInputElement>("#settings-font-family")!;
   const sizeInput = document.querySelector<HTMLInputElement>("#settings-font-size")!;
+  const recycleInput = document.querySelector<HTMLInputElement>("#settings-recycle-bin")!;
   const list = document.querySelector<HTMLDataListElement>("#settings-font-list")!;
 
   let open = false;
   let fontFamily = DEFAULT_FONT_FAMILY;
   let fontSize = DEFAULT_FONT_SIZE;
+  let recycleBinSize = DEFAULT_RECYCLE_BIN_SIZE;
 
   list.replaceChildren(
     ...FONT_PRESETS.map((name) => {
@@ -78,6 +89,9 @@ export function bindSettings(host: SettingsHost): SettingsApi {
     sizeInput.value = String(fontSize);
     sizeInput.min = String(FONT_SIZE_MIN);
     sizeInput.max = String(FONT_SIZE_MAX);
+    recycleInput.value = String(recycleBinSize);
+    recycleInput.min = "0";
+    recycleInput.max = String(RECYCLE_BIN_SIZE_MAX);
   };
 
   const apply = () => {
@@ -111,6 +125,11 @@ export function bindSettings(host: SettingsHost): SettingsApi {
     apply();
     host.onPersist({ fontSize });
   });
+  recycleInput.addEventListener("change", () => {
+    recycleBinSize = normalizeRecycleBinSize(Number(recycleInput.value));
+    syncFields();
+    host.onPersist({ recycleBinSize });
+  });
   page.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") {
       ev.stopPropagation();
@@ -125,9 +144,10 @@ export function bindSettings(host: SettingsHost): SettingsApi {
     setOpen,
     isOpen: () => open,
     syncLocale,
-    applyFromSettings(nextFamily, nextSize) {
+    applyFromSettings(nextFamily, nextSize, nextRecycleBinSize) {
       fontFamily = normalizeFontFamily(nextFamily);
       fontSize = normalizeFontSize(nextSize);
+      recycleBinSize = normalizeRecycleBinSize(nextRecycleBinSize);
       apply();
     },
   };

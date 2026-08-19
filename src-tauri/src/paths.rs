@@ -120,6 +120,39 @@ pub fn session_index_path() -> PathBuf {
     session_dir().join("index.json")
 }
 
+pub fn recycle_bin_path() -> PathBuf {
+    data_dir().join("recycle-bin.json")
+}
+
+fn path_key(path: &Path) -> String {
+    let buf = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let raw = buf.to_string_lossy();
+    let trimmed = raw
+        .strip_prefix(r"\\?\")
+        .or_else(|| raw.strip_prefix("//?/"))
+        .unwrap_or(raw.as_ref());
+    let unified = trimmed.replace('\\', "/");
+    if cfg!(windows) {
+        unified.to_ascii_lowercase()
+    } else {
+        unified
+    }
+}
+
+pub fn is_session_path(path: &Path) -> bool {
+    let key = path_key(path);
+    let root = path_key(&session_dir());
+    key == root || key.starts_with(&format!("{root}/"))
+}
+
+pub fn deny_if_session_path(path: &str) -> Result<(), String> {
+    if is_session_path(Path::new(path)) {
+        Err("session-cache".into())
+    } else {
+        Ok(())
+    }
+}
+
 pub fn webview_data_dir() -> PathBuf {
     data_dir().join("webview")
 }

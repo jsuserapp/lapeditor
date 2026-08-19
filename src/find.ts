@@ -17,6 +17,7 @@ const ICON_REPLACE_ALL = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill
 export type FindWidgetHost = {
   getEditor: () => monaco.editor.IStandaloneCodeEditor | undefined;
   isHexView: () => boolean;
+  isReadOnly?: () => boolean;
   onLayout?: () => void;
 };
 
@@ -175,13 +176,18 @@ function syncEditorPadding() {
   host?.onLayout?.();
 }
 
+function canReplace(): boolean {
+  return !host?.isReadOnly?.();
+}
+
 function syncButtons() {
   const hasQuery = findInput().value.length > 0;
   const hasMatches = matches.length > 0 && !regexInvalid;
+  const replace = canReplace();
   prevBtn().disabled = !hasMatches;
   nextBtn().disabled = !hasMatches;
-  replaceBtn().disabled = !hasMatches;
-  replaceAllBtn().disabled = !hasMatches || !hasQuery;
+  replaceBtn().disabled = !hasMatches || !replace;
+  replaceAllBtn().disabled = !hasMatches || !hasQuery || !replace;
   pressed(optCase(), matchCase);
   pressed(optWord(), wholeWord);
   pressed(optRegex(), useRegex);
@@ -369,7 +375,7 @@ function moveMatch(delta: number) {
 function replaceOne() {
   const editor = host?.getEditor();
   const model = editor?.getModel();
-  if (!editor || !model || matches.length === 0) {
+  if (!editor || !model || matches.length === 0 || !canReplace()) {
     return;
   }
   const match = matches[current];
@@ -387,7 +393,7 @@ function replaceOne() {
 function replaceAll() {
   const editor = host?.getEditor();
   const model = editor?.getModel();
-  if (!editor || !model || matches.length === 0) {
+  if (!editor || !model || matches.length === 0 || !canReplace()) {
     return;
   }
   const edits = [...matches].reverse().map((match) => ({

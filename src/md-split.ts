@@ -68,6 +68,8 @@ export function bindMdScrollSync(options: {
   getEditor: () => monaco.editor.IStandaloneCodeEditor | undefined;
   preview: HTMLElement;
   isActive: () => boolean;
+  shouldIgnorePreviewScroll?: () => boolean;
+  shouldIgnoreEditorScroll?: () => boolean;
 }) {
   let source: "editor" | "preview" | null = null;
   let unlock: number | undefined;
@@ -83,16 +85,22 @@ export function bindMdScrollSync(options: {
     }, 80);
   };
 
-  const editorMax = (ed: monaco.editor.IStandaloneCodeEditor) => {
+  /** Scrollable range for the editor (content height minus viewport). */
+  const editorRange = (ed: monaco.editor.IStandaloneCodeEditor) => {
     return Math.max(0, ed.getScrollHeight() - ed.getLayoutInfo().height);
   };
 
-  const previewMax = () => {
+  /** Scrollable range for the preview (its own content height minus viewport). */
+  const previewRange = () => {
     return Math.max(0, options.preview.scrollHeight - options.preview.clientHeight);
   };
 
   const fromEditor = () => {
-    if (!options.isActive() || source === "preview") {
+    if (
+      !options.isActive() ||
+      source === "preview" ||
+      options.shouldIgnoreEditorScroll?.()
+    ) {
       return;
     }
     const ed = options.getEditor();
@@ -100,13 +108,19 @@ export function bindMdScrollSync(options: {
       return;
     }
     mark("editor");
-    const max = editorMax(ed);
-    const pMax = previewMax();
-    options.preview.scrollTop = max <= 0 || pMax <= 0 ? 0 : (ed.getScrollTop() / max) * pMax;
+    const eRange = editorRange(ed);
+    const pRange = previewRange();
+    // Ratio of each side's own scrollable height — not 1:1 pixels.
+    options.preview.scrollTop =
+      eRange <= 0 || pRange <= 0 ? 0 : (ed.getScrollTop() / eRange) * pRange;
   };
 
   const onPreviewScroll = () => {
-    if (!options.isActive() || source === "editor") {
+    if (
+      !options.isActive() ||
+      source === "editor" ||
+      options.shouldIgnorePreviewScroll?.()
+    ) {
       return;
     }
     const ed = options.getEditor();
@@ -114,9 +128,11 @@ export function bindMdScrollSync(options: {
       return;
     }
     mark("preview");
-    const max = editorMax(ed);
-    const pMax = previewMax();
-    ed.setScrollTop(max <= 0 || pMax <= 0 ? 0 : (options.preview.scrollTop / pMax) * max);
+    const eRange = editorRange(ed);
+    const pRange = previewRange();
+    ed.setScrollTop(
+      eRange <= 0 || pRange <= 0 ? 0 : (options.preview.scrollTop / pRange) * eRange,
+    );
   };
 
   options.preview.addEventListener("scroll", onPreviewScroll, { passive: true });

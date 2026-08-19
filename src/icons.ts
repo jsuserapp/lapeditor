@@ -20,8 +20,11 @@ import copyIcon from "./assets/icons/copy.png";
 import cutIcon from "./assets/icons/cut.png";
 import undoIcon from "./assets/icons/undo.png";
 import redoIcon from "./assets/icons/redo.png";
+import trashIcon from "./assets/icons/trash.png";
+import bookIcon from "./assets/icons/book.png";
+import pdfIcon from "./assets/icons/pdf.png";
 
-export { addFileIcon, cutIcon, copyIcon, pasteIcon };
+export { addFileIcon, cutIcon, copyIcon, pasteIcon, bookIcon, pdfIcon };
 
 function setImg(el: HTMLImageElement | null, src: string) {
   if (el) {
@@ -36,6 +39,7 @@ export function applyToolbarIcons() {
   setImg(document.querySelector("#btn-save .toolbar-btn-icon"), saveIcon);
   setImg(document.querySelector("#btn-save-as .toolbar-btn-icon"), saveAsIcon);
   setImg(document.querySelector("#btn-find .toolbar-btn-icon"), searchIcon);
+  setImg(document.querySelector("#btn-trash .toolbar-btn-icon"), trashIcon);
   setImg(document.querySelector("#syntax-icon"), sourceCodeIcon);
   setImg(document.querySelector("#btn-locale .toolbar-btn-icon"), languageIcon);
   setImg(document.querySelector("#btn-md .toolbar-btn-icon"), markdownIcon);

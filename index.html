@@ -58,6 +58,13 @@
               <img class="toolbar-btn-icon" src="./src/assets/icons/search.png" alt="" />
               <span data-i18n="toolbar.find">Find</span>
             </button>
+            <div class="toolbar-popover">
+              <button type="button" id="btn-trash" class="toolbar-action" data-i18n-title="toolbar.trashTitle" aria-haspopup="menu" aria-expanded="false">
+                <img class="toolbar-btn-icon" src="./src/assets/icons/trash.png" alt="" />
+                <span data-i18n="toolbar.trash">Trash</span>
+              </button>
+              <div id="trash-menu" class="popover-menu popover-menu-start trash-menu" hidden role="menu"></div>
+            </div>
           </div>
           <div class="toolbar-sep" aria-hidden="true"></div>
           <div class="toolbar-group">
@@ -174,10 +181,60 @@
         <div id="center">
       <div class="tab-bar" id="tab-bar"></div>
       <main id="editor-host">
-        <div id="monaco-host"></div>
+        <div id="monaco-wrap">
+          <div id="monaco-host"></div>
+          <div id="md-edit-panel" hidden>
+            <button type="button" id="md-edit-panel-toggle" class="md-edit-panel-header" aria-expanded="false" data-i18n-title="md.tools">
+              <span class="md-edit-panel-title" data-i18n="md.tools">Tools</span>
+              <span id="md-edit-panel-icon" aria-hidden="true"></span>
+            </button>
+            <div id="md-edit-group" class="md-edit-panel-content">
+              <button type="button" id="btn-md-bold" class="toolbar-icon-btn" data-i18n-title="md.bold"></button>
+              <button type="button" id="btn-md-italic" class="toolbar-icon-btn" data-i18n-title="md.italic"></button>
+              <button type="button" id="btn-md-code" class="toolbar-icon-btn" data-i18n-title="md.code"></button>
+              <button type="button" id="btn-md-heading" class="toolbar-icon-btn md-icon-fill" data-i18n-title="md.heading"></button>
+              <button type="button" id="btn-md-list" class="toolbar-icon-btn" data-i18n-title="md.list"></button>
+              <button type="button" id="btn-md-link" class="toolbar-icon-btn" data-i18n-title="md.link"></button>
+              <button type="button" id="btn-md-image" class="toolbar-icon-btn" data-i18n-title="md.image"></button>
+              <button type="button" id="btn-md-formula" class="toolbar-icon-btn md-icon-fill" data-i18n-title="md.formula"></button>
+            </div>
+          </div>
+        </div>
         <div id="md-gutter" hidden></div>
         <div id="md-host" hidden></div>
         <div id="hex-host" hidden></div>
+        <div id="pdf-host" hidden>
+          <div class="pdf-toolbar">
+            <button type="button" id="pdf-prev" class="pdf-tool-btn" data-i18n-title="pdf.prev"></button>
+            <input id="pdf-page" class="pdf-page-input" type="number" min="1" step="1" />
+            <span class="pdf-page-sep">/</span>
+            <span id="pdf-page-count">0</span>
+            <button type="button" id="pdf-next" class="pdf-tool-btn" data-i18n-title="pdf.next"></button>
+            <span class="pdf-toolbar-gap"></span>
+            <button type="button" id="pdf-zoom-out" class="pdf-tool-btn" data-i18n-title="pdf.zoomOut"></button>
+            <span id="pdf-zoom-label">100%</span>
+            <button type="button" id="pdf-zoom-in" class="pdf-tool-btn" data-i18n-title="pdf.zoomIn"></button>
+          </div>
+          <div id="pdf-scroll" class="pdf-scroll" tabindex="0">
+            <div id="pdf-pages" class="pdf-pages"></div>
+            <div id="pdf-error" class="pdf-error" hidden></div>
+          </div>
+        </div>
+        <div id="epub-host" hidden>
+          <div class="pdf-toolbar">
+            <button type="button" id="epub-prev" class="pdf-tool-btn" data-i18n-title="epub.prev"></button>
+            <input id="epub-page" class="pdf-page-input" type="number" min="1" step="1" />
+            <span class="pdf-page-sep">/</span>
+            <span id="epub-page-count">0</span>
+            <button type="button" id="epub-next" class="pdf-tool-btn" data-i18n-title="epub.next"></button>
+            <span class="pdf-toolbar-gap"></span>
+            <button type="button" id="epub-zoom-out" class="pdf-tool-btn" data-i18n-title="epub.zoomOut"></button>
+            <span id="epub-zoom-label">100%</span>
+            <button type="button" id="epub-zoom-in" class="pdf-tool-btn" data-i18n-title="epub.zoomIn"></button>
+          </div>
+          <iframe id="epub-frame" class="epub-frame" sandbox="allow-same-origin" title="EPUB"></iframe>
+          <div id="epub-error" class="pdf-error" hidden></div>
+        </div>
         <div id="find-widget" class="find-widget" hidden role="dialog" data-i18n-aria="find.title">
           <button type="button" id="find-toggle-replace" class="find-expand" data-i18n-title="find.toggleReplace" aria-expanded="false"></button>
           <div class="find-body">
@@ -222,6 +279,11 @@
                 <span data-i18n="settings.fontSize">Font size</span>
                 <input id="settings-font-size" type="number" min="10" max="28" step="1" />
               </label>
+              <label class="settings-field">
+                <span data-i18n="settings.recycleBin">Trash</span>
+                <input id="settings-recycle-bin" type="number" min="0" max="50" step="1" />
+              </label>
+              <p class="settings-hint" data-i18n="settings.recycleBinHint">Closed untitled drafts are kept across restarts until this limit. 0 disables the trash.</p>
             </div>
           </section>
         </div>
@@ -229,6 +291,7 @@
       <footer class="status-bar" id="status-bar">
         <div class="status-cell" id="status-stats"></div>
         <div class="status-cell" id="status-cursor"></div>
+        <div class="status-cell" id="status-readonly" hidden></div>
         <div class="status-cell status-clickable" id="status-eol" role="button" tabindex="0"></div>
         <div class="status-popover">
           <div class="status-cell status-clickable" id="status-encoding" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false"></div>
@@ -295,6 +358,27 @@
         </div>
       </div>
     </div>
+    <div id="md-insert-dialog" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="md-insert-title">
+        <h2 id="md-insert-title"></h2>
+        <label class="modal-field">
+          <span id="md-insert-label1"></span>
+          <input id="md-insert-field1" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <label class="modal-field" id="md-insert-field2-wrap">
+          <span id="md-insert-label2"></span>
+          <input id="md-insert-field2" type="text" spellcheck="false" autocomplete="off" />
+        </label>
+        <div id="md-insert-radios" hidden>
+          <label class="modal-radio"><input type="radio" name="md-formula-mode" id="md-formula-inline" value="inline" checked /> <span data-i18n="md.formulaInline">Inline</span></label>
+          <label class="modal-radio"><input type="radio" name="md-formula-mode" id="md-formula-block" value="block" /> <span data-i18n="md.formulaBlock">Block</span></label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="md-insert-cancel" data-i18n="dialog.cancel">Cancel</button>
+          <button type="button" id="md-insert-confirm" class="modal-primary" data-i18n="dialog.ok">OK</button>
+        </div>
+      </div>
+    </div>
     <div id="name-dialog" class="modal-backdrop" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="name-dialog-title">
         <h2 id="name-dialog-title"></h2>
@@ -358,12 +442,22 @@
         </div>
       </div>
     </div>
+    <div id="md-preview-context-menu" class="popover-menu tab-context-menu" hidden role="menu">
+      <button type="button" id="md-ctx-copy" class="popover-item" role="menuitem" data-i18n="md.copy">Copy</button>
+      <button type="button" id="md-ctx-copy-image" class="popover-item" role="menuitem" data-i18n="md.copyImage">Copy Image</button>
+    </div>
     <div id="tab-context-menu" class="popover-menu tab-context-menu" hidden role="menu">
       <button type="button" id="tab-ctx-full-path" class="popover-item" role="menuitem" data-i18n="tab.copyFullPath">Copy Full Path</button>
       <button type="button" id="tab-ctx-rel-path" class="popover-item" role="menuitem" data-i18n="tab.copyRelativePath">Copy Relative Path</button>
       <button type="button" id="tab-ctx-file-name" class="popover-item" role="menuitem" data-i18n="tab.copyFileName">Copy File Name</button>
+      <button type="button" id="tab-ctx-open-folder" class="popover-item" role="menuitem" data-i18n="tab.openContainingFolder">Open Containing Folder</button>
       <div class="popover-sep" role="separator"></div>
       <button type="button" id="tab-ctx-close" class="popover-item" role="menuitem" data-i18n="tab.close">Close</button>
+    </div>
+    <div id="explorer-context-menu" class="popover-menu tab-context-menu" hidden role="menu">
+      <button type="button" id="explorer-ctx-open-folder" class="popover-item" role="menuitem"></button>
+      <div class="popover-sep" role="separator"></div>
+      <button type="button" id="explorer-ctx-delete" class="popover-item modal-danger" role="menuitem" data-i18n="explorer.deleteTitle">Delete</button>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

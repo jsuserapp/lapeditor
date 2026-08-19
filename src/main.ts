@@ -27,7 +27,7 @@ import {
 } from "./format";
 import { bindFormatDialogs, openFormatOptionsDialog } from "./format-ui";
 import { bindFindWidget, closeFind, openFind, refreshFind, syncFindLocale } from "./find";
-import { addFileIcon, applyToolbarIcons, copyIcon, cutIcon, pasteIcon } from "./icons";
+import { addFileIcon, applyToolbarIcons, bookIcon, copyIcon, cutIcon, pasteIcon, pdfIcon } from "./icons";
 import { bindTooltips, setTooltip } from "./tooltip";
 import { registerLanguageIds, registerTextMateLanguages, type LanguagePluginDto } from "./textmate";
 import {
@@ -45,9 +45,18 @@ import {
   bindSettings,
   DEFAULT_FONT_FAMILY,
   DEFAULT_FONT_SIZE,
+  DEFAULT_RECYCLE_BIN_SIZE,
+  normalizeRecycleBinSize,
   type SettingsApi,
 } from "./settings";
 import { emptyHexHistory, HexEditor, type HexHistory } from "./hex";
+import {
+  clampPdfZoom,
+  isPdfPath,
+  PDF_LANGUAGE,
+  PdfViewer,
+} from "./pdf";
+import { EPUB_LANGUAGE, EpubViewer, isEpubPath } from "./epub";
 import {
   applyMdSplitRatio,
   bindMdGutter,
@@ -55,6 +64,15 @@ import {
   clampMdSplit,
   MD_SPLIT_DEFAULT,
 } from "./md-split";
+import {
+  bindMdEdit,
+  mdBold,
+  mdItalic,
+  mdLink,
+  mdPasteImageIfAny,
+  syncMdEditLocale,
+  syncMdEditToolbar,
+} from "./md-edit";
 import { bindWebviewZoom } from "./zoom";
 import {
   base64ToBytes,
@@ -74,11 +92,12 @@ self.MonacoEnvironment = {
 type DiskStamp = {
   mtimeMs: number;
   size: number;
+  readonly?: boolean;
 };
 
 const ENCODINGS = ["ansi", "utf-8", "utf-8-bom", "utf-16be", "utf-16le"] as const;
 type EncodingId = (typeof ENCODINGS)[number];
-type ViewMode = "text" | "hex";
+type ViewMode = "text" | "hex" | "doc";
 
 type FileBytesChunkDto = {
   data: string;
@@ -97,6 +116,7 @@ type TabState = {
   model: monaco.editor.ITextModel;
   viewState: monaco.editor.ICodeEditorViewState | null;
   dirty: boolean;
+  readOnly: boolean;
   savedVersionId: number;
   diskStamp: DiskStamp | null;
   ignoredStamp: DiskStamp | null;
@@ -108,7 +128,20 @@ type TabState = {
   textStale: boolean;
   byteMarkIds: string[];
   mdView: MdView;
+  mdScrollTop: number;
+  pdfPage: number;
+  pdfScale: number;
   hexHistory: HexHistory;
+};
+
+type TrashItem = {
+  id: string;
+  title: string;
+  untitledNumber: number | null;
+  content: string;
+  languageId: string;
+  encoding: EncodingId;
+  trashedAt: number;
 };
 
 type SessionTabDto = {
@@ -118,7 +151,7 @@ type SessionTabDto = {
   languageId: string;
   encoding?: string | null;
   dirty: boolean;
-  content: string;
+  content?: string;
   viewState: monaco.editor.ICodeEditorViewState | null;
   lastDiskMtimeMs?: number | null;
   lastDiskSize?: number | null;
@@ -127,6 +160,12 @@ type SessionTabDto = {
   viewMode?: string | null;
   mdPreview?: boolean | null;
   mdView?: string | null;
+  mdScrollTop?: number | null;
+  pdfPage?: number | null;
+  pdfScale?: number | null;
+  trashed?: boolean;
+  trashedAt?: number | null;
+  readOnly?: boolean;
 };
 
 type SessionDto = {
@@ -145,6 +184,8 @@ type AppSettings = {
   fontFamily?: string;
   fontSize?: number;
   searchExclude?: SearchExcludeSettings | null;
+  wordWrap?: boolean;
+  recycleBinSize?: number;
 };
 
 const PLAINTEXT = "plaintext";
@@ -155,6 +196,54 @@ function isMarkdownLanguage(languageId: string | undefined): boolean {
   return languageId === "markdown";
 }
 
+function isPdfTab(tab: TabState): boolean {
+  return tab.languageId === PDF_LANGUAGE || isPdfPath(tab.path);
+}
+
+function isEpubTab(tab: TabState): boolean {
+  return tab.languageId === EPUB_LANGUAGE || isEpubPath(tab.path);
+}
+
+function isDocTab(tab: TabState): boolean {
+  return isPdfTab(tab) || isEpubTab(tab);
+}
+
+function isReadOnlyTab(tab: TabState | undefined): boolean {
+  return !!tab && (tab.readOnly || isDocTab(tab));
+}
+
+function isDocPath(path: string | null | undefined): boolean {
+  return isPdfPath(path) || isEpubPath(path);
+}
+
+function parseViewMode(value: string | null | undefined, path: string | null): ViewMode {
+  if (value === "hex") {
+    return "hex";
+  }
+  if (value === "doc" || (isDocPath(path) && value !== "text")) {
+    return "doc";
+  }
+  return "text";
+}
+
+function capturePdfState(tab: TabState) {
+  if (tab.viewMode !== "doc") {
+    return;
+  }
+  if (isEpubTab(tab) && epubViewer) {
+    const state = epubViewer.capture();
+    tab.pdfPage = state.page;
+    tab.pdfScale = state.scale;
+    return;
+  }
+  if (!pdfViewer) {
+    return;
+  }
+  const state = pdfViewer.capture();
+  tab.pdfPage = state.page;
+  tab.pdfScale = state.scale;
+}
+
 function parseMdView(value: string | boolean | null | undefined): MdView {
   if (value === "split" || value === "reader") {
     return value;
@@ -163,8 +252,10 @@ function parseMdView(value: string | boolean | null | undefined): MdView {
 }
 
 type MdPreview = {
-  render(source: string, immediate?: boolean): void;
+  render(source: string, immediate?: boolean, baseDir?: string | null): void;
   setTheme(theme: ThemeId): void;
+  highlightSourceLine(line: number | null): void;
+  onSourceClick: ((line: number) => void) | null;
 };
 
 const tabBar = document.querySelector<HTMLDivElement>("#tab-bar")!;
@@ -174,6 +265,8 @@ const syntaxMenu = document.querySelector<HTMLDivElement>("#syntax-menu")!;
 const saveButton = document.querySelector<HTMLButtonElement>("#btn-save")!;
 const saveMenuButton = document.querySelector<HTMLButtonElement>("#btn-save-menu")!;
 const saveMenu = document.querySelector<HTMLDivElement>("#save-menu")!;
+const trashButton = document.querySelector<HTMLButtonElement>("#btn-trash")!;
+const trashMenu = document.querySelector<HTMLDivElement>("#trash-menu")!;
 const localeButton = document.querySelector<HTMLButtonElement>("#btn-locale")!;
 const localeMenu = document.querySelector<HTMLDivElement>("#locale-menu")!;
 const themeButton = document.querySelector<HTMLButtonElement>("#btn-theme")!;
@@ -181,10 +274,13 @@ const statusStatsEl = document.querySelector<HTMLDivElement>("#status-stats")!;
 const statusCursorEl = document.querySelector<HTMLDivElement>("#status-cursor")!;
 const statusEolEl = document.querySelector<HTMLDivElement>("#status-eol")!;
 const statusEncodingEl = document.querySelector<HTMLDivElement>("#status-encoding")!;
+const statusReadonlyEl = document.querySelector<HTMLDivElement>("#status-readonly")!;
 const encodingMenu = document.querySelector<HTMLDivElement>("#encoding-menu")!;
 const editorHost = document.querySelector<HTMLDivElement>("#editor-host")!;
 const monacoHost = document.querySelector<HTMLDivElement>("#monaco-host")!;
 const hexHost = document.querySelector<HTMLDivElement>("#hex-host")!;
+const pdfHost = document.querySelector<HTMLDivElement>("#pdf-host")!;
+const epubHost = document.querySelector<HTMLDivElement>("#epub-host")!;
 const hexButton = document.querySelector<HTMLButtonElement>("#btn-hex")!;
 const wrapButton = document.querySelector<HTMLButtonElement>("#btn-wrap")!;
 const pasteButton = document.querySelector<HTMLButtonElement>("#btn-paste")!;
@@ -203,6 +299,10 @@ const tabs = new Map<string, TabState>();
 let activeTabId: string | null = null;
 let editor: monaco.editor.IStandaloneCodeEditor | undefined;
 let wordWrapEnabled = false;
+let recycleBinSize = DEFAULT_RECYCLE_BIN_SIZE;
+const trashItems: TrashItem[] = [];
+const contentWriteVersions = new Map<string, number>();
+const pendingContentWrites = new Map<string, string>();
 let plugins: LanguagePluginDto[] = [];
 let tabSeq = 1;
 let restoringSession = false;
@@ -220,6 +320,8 @@ let currentTheme: ThemeId = "dark";
 let currentLocaleId = "en";
 let uiLocales: { id: string; name: string }[] = [];
 let hexEditor: HexEditor | undefined;
+let pdfViewer: PdfViewer | undefined;
+let epubViewer: EpubViewer | undefined;
 let explorer: ExplorerApi | undefined;
 let searchUi: SearchApi | undefined;
 let settingsUi: SettingsApi | undefined;
@@ -228,6 +330,7 @@ let formatterCommands: FormatterCommandInfo[] = [];
 let canFormatKey: monaco.editor.IContextKey<boolean> | undefined;
 let hasSelectionKey: monaco.editor.IContextKey<boolean> | undefined;
 let canPasteKey: monaco.editor.IContextKey<boolean> | undefined;
+let canCutKey: monaco.editor.IContextKey<boolean> | undefined;
 let editorContextMenu: monaco.IDisposable | undefined;
 let clipboardMenuPatched = false;
 let contextMenuIconObserver: MutationObserver | undefined;
@@ -235,7 +338,24 @@ let mdPreview: MdPreview | undefined;
 let mdPreviewLoading: Promise<MdPreview> | null = null;
 let mdSplitRatio = MD_SPLIT_DEFAULT;
 let syncMdScrollFromEditor: (() => void) | undefined;
+let suppressMdEditorScrollSyncUntil = 0;
+let suppressMdPreviewScrollSyncUntil = 0;
+let pendingMdScrollTabId: string | null = null;
+let mdPreviewOwnerTabId: string | null = null;
 const loadingMore = new Set<string>();
+
+function captureMdScroll(tab: TabState) {
+  if (mdHost.hidden) {
+    return;
+  }
+  tab.mdScrollTop = mdHost.scrollTop;
+}
+
+function restoreMdScroll(tab: TabState) {
+  suppressMdPreviewScrollSyncUntil = performance.now() + 120;
+  suppressMdEditorScrollSyncUntil = performance.now() + 120;
+  mdHost.scrollTop = Math.max(0, tab.mdScrollTop);
+}
 
 function captureActiveViewState() {
   if (!editor || !activeTabId) {
@@ -244,7 +364,54 @@ function captureActiveViewState() {
   const tab = tabs.get(activeTabId);
   if (tab) {
     tab.viewState = editor.saveViewState();
+    captureMdScroll(tab);
+    capturePdfState(tab);
   }
+}
+
+function snapshotOpenTab(tab: TabState): SessionTabDto {
+  return {
+    id: tab.id,
+    title: tab.title,
+    path: tab.path,
+    languageId: tab.languageId,
+    encoding: tab.encoding,
+    dirty: tab.readOnly ? false : tab.dirty,
+    content: "",
+    viewState: tab.viewState,
+    lastDiskMtimeMs: tab.diskStamp?.mtimeMs ?? null,
+    lastDiskSize: tab.diskStamp?.size ?? null,
+    diskLoaded: tab.diskLoaded,
+    diskSize: tab.diskSize,
+    viewMode: tab.viewMode,
+    mdPreview: tab.mdView !== "off",
+    mdView: tab.mdView === "off" ? null : tab.mdView,
+    mdScrollTop: tab.mdScrollTop,
+    pdfPage: tab.pdfPage,
+    pdfScale: tab.pdfScale,
+    trashed: false,
+    trashedAt: null,
+    readOnly: tab.readOnly,
+  };
+}
+
+function snapshotTrashTab(item: TrashItem): SessionTabDto {
+  return {
+    id: item.id,
+    title: item.title,
+    path: null,
+    languageId: item.languageId,
+    encoding: item.encoding,
+    dirty: true,
+    content: "",
+    viewState: null,
+    viewMode: "text",
+    mdPreview: false,
+    mdView: null,
+    mdScrollTop: 0,
+    trashed: true,
+    trashedAt: item.trashedAt,
+  };
 }
 
 function snapshotSession(): SessionDto {
@@ -256,32 +423,47 @@ function snapshotSession(): SessionDto {
     null;
   return {
     activeId,
-    tabs: persisted.map((tab) => ({
-      id: tab.id,
-      title: tab.title,
-      path: tab.path,
-      languageId: tab.languageId,
-      encoding: tab.encoding,
-      dirty: tab.dirty,
-      content: tab.dirty ? tab.model.getValue() : "",
-      viewState: tab.viewState,
-      lastDiskMtimeMs: tab.diskStamp?.mtimeMs ?? null,
-      lastDiskSize: tab.diskStamp?.size ?? null,
-      diskLoaded: tab.diskLoaded,
-      diskSize: tab.diskSize,
-      viewMode: tab.viewMode,
-      mdPreview: tab.mdView !== "off",
-      mdView: tab.mdView === "off" ? null : tab.mdView,
-    })),
+    tabs: [...persisted.map(snapshotOpenTab), ...trashItems.map(snapshotTrashTab)],
   };
+}
+
+function collectSessionContents(): Record<string, string> {
+  const contents: Record<string, string> = {};
+  for (const tab of tabs.values()) {
+    if (isEmptyUntitled(tab) || isDocTab(tab) || !tab.dirty) {
+      continue;
+    }
+    const ver = tab.model.getAlternativeVersionId();
+    if (contentWriteVersions.get(tab.id) === ver) {
+      continue;
+    }
+    contents[tab.id] = tab.model.getValue();
+  }
+  for (const [id, text] of pendingContentWrites) {
+    contents[id] = text;
+  }
+  return contents;
+}
+
+function commitSessionContents(contents: Record<string, string>) {
+  for (const id of Object.keys(contents)) {
+    const tab = tabs.get(id);
+    if (tab) {
+      contentWriteVersions.set(id, tab.model.getAlternativeVersionId());
+    }
+    pendingContentWrites.delete(id);
+  }
 }
 
 async function persistSession() {
   if (restoringSession) {
     return;
   }
+  const session = snapshotSession();
+  const contents = collectSessionContents();
   try {
-    await invoke("save_session", { session: snapshotSession() });
+    await invoke("save_session", { session, contents });
+    commitSessionContents(contents);
   } catch (err) {
     console.warn("failed to persist session", err);
   }
@@ -303,6 +485,9 @@ function schedulePersistSession() {
 function layoutEditor() {
   if (hexEditor && !hexHost.hidden) {
     hexEditor.layout();
+  }
+  if (pdfViewer && !pdfHost.hidden) {
+    pdfViewer.layout();
   }
   if (!editor || monacoHost.hidden) {
     return;
@@ -350,9 +535,16 @@ function dirname(path: string): string {
   return parent;
 }
 
+function mdPreviewBaseDir(tab: TabState): string | null {
+  return tab.path ? dirname(tab.path) : null;
+}
+
 function defaultSaveName(tab: TabState): string {
   if (tab.path) {
     return basename(tab.path);
+  }
+  if (isMarkdownLanguage(tab.languageId)) {
+    return tab.title.endsWith(".md") ? tab.title : `${tab.title}.md`;
   }
   return tab.title.endsWith(".txt") ? tab.title : `${tab.title}.txt`;
 }
@@ -408,24 +600,40 @@ function syncHexButton() {
 
 function syncSaveButton() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-  saveButton.disabled = !tab?.dirty;
+  saveButton.disabled = !tab || tab.readOnly || !tab.dirty;
+}
+
+function applyTabReadOnly(tab: TabState | undefined) {
+  const readOnly = isReadOnlyTab(tab);
+  editor?.updateOptions({
+    readOnly,
+    domReadOnly: readOnly,
+    readOnlyMessage: readOnly ? { value: t("status.readOnly") } : undefined,
+  });
+  hexEditor?.setReadOnly(readOnly);
+  syncSaveButton();
+  syncEditActions();
+  syncFormatButton();
+  syncMdPreviewButton();
 }
 
 function syncEditActions() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
   const hexReady = !!tab && tab.viewMode === "hex" && !!hexEditor;
-  const textReady = !!tab && tab.viewMode !== "hex" && !!editor;
+  const textReady = !!tab && tab.viewMode === "text" && !!editor;
+  const editable = !!tab && !tab.readOnly;
   const model = tab?.model;
   const selection = editor?.getSelection();
   const hasSelection = textReady && !!selection && !selection.isEmpty();
-  const canPaste = textReady;
+  const canPaste = textReady && editable;
   pasteButton.disabled = !canPaste;
   copyButton.disabled = !hasSelection;
-  cutButton.disabled = !hasSelection;
+  cutButton.disabled = !hasSelection || !editable;
   hasSelectionKey?.set(hasSelection);
   canPasteKey?.set(canPaste);
-  undoButton.disabled = hexReady ? !hexEditor?.canUndo() : !textReady || !model?.canUndo();
-  redoButton.disabled = hexReady ? !hexEditor?.canRedo() : !textReady || !model?.canRedo();
+  canCutKey?.set(!!hasSelection && editable);
+  undoButton.disabled = !editable || (hexReady ? !hexEditor?.canUndo() : !textReady || !model?.canUndo());
+  redoButton.disabled = !editable || (hexReady ? !hexEditor?.canRedo() : !textReady || !model?.canRedo());
   const pasteLabel = t("toolbar.pasteTitle");
   const copyLabel = t("toolbar.copyTitle");
   const cutLabel = t("toolbar.cutTitle");
@@ -476,6 +684,10 @@ async function runCopy() {
 }
 
 async function runCut() {
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  if (tab?.readOnly) {
+    return;
+  }
   const text = selectedEditorText();
   if (text == null || !editor) {
     return;
@@ -492,8 +704,17 @@ async function runPaste() {
   if (!editor) {
     return;
   }
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  if (!tab || tab.readOnly || tab.viewMode === "hex") {
+    return;
+  }
   editor.focus();
   const text = await readClipboardText();
+  if (!text && isMarkdownTextEditing()) {
+    if (await mdPasteImageIfAny()) {
+      return;
+    }
+  }
   if (!text) {
     return;
   }
@@ -508,6 +729,12 @@ async function runPaste() {
 function triggerEditAction(handlerId: string) {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
   if (!tab) {
+    return;
+  }
+  if (
+    tab.readOnly &&
+    handlerId !== "editor.action.clipboardCopyAction"
+  ) {
     return;
   }
   if (tab.viewMode === "hex") {
@@ -546,6 +773,9 @@ function markTabClean(tab: TabState) {
 }
 
 function forceTabDirty(tab: TabState) {
+  if (tab.readOnly) {
+    return;
+  }
   tab.savedVersionId = -1;
   if (!tab.dirty) {
     tab.dirty = true;
@@ -554,6 +784,13 @@ function forceTabDirty(tab: TabState) {
 }
 
 function syncTabDirtyFromModel(tab: TabState) {
+  if (tab.readOnly) {
+    if (tab.dirty) {
+      tab.dirty = false;
+      renderTabs();
+    }
+    return;
+  }
   const dirty = tab.model.getAlternativeVersionId() !== tab.savedVersionId;
   if (tab.dirty === dirty) {
     return;
@@ -565,17 +802,17 @@ function syncTabDirtyFromModel(tab: TabState) {
 
 function syncWrapButton() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-  const hex = tab?.viewMode === "hex";
-  wrapButton.classList.toggle("active", wordWrapEnabled && !hex);
+  const text = tab?.viewMode === "text";
+  wrapButton.classList.toggle("active", wordWrapEnabled && !!text);
   wrapButton.setAttribute("aria-pressed", wordWrapEnabled ? "true" : "false");
-  wrapButton.disabled = !!hex || !tab;
+  wrapButton.disabled = !text;
   const label = wordWrapEnabled ? t("toolbar.wrapOn") : t("toolbar.wrapOff");
   setTooltip(wrapButton, label);
   wrapButton.setAttribute("aria-label", label);
 }
 
 function tabMdView(tab: TabState): MdView {
-  if (!isMarkdownLanguage(tab.languageId) || tab.viewMode === "hex") {
+  if (!isMarkdownLanguage(tab.languageId) || tab.viewMode !== "text") {
     return "off";
   }
   return tab.mdView;
@@ -593,6 +830,21 @@ async function ensureMdPreview(): Promise<MdPreview> {
     mdPreviewLoading = import("./markdown").then((mod) => {
       const preview = new mod.MarkdownPreview(mdHost);
       preview.setTheme(currentTheme);
+      preview.onRendered = () => {
+        const current = activeTabId ? tabs.get(activeTabId) : undefined;
+        if (
+          current &&
+          pendingMdScrollTabId === current.id &&
+          tabShowsMdPreview(current)
+        ) {
+          pendingMdScrollTabId = null;
+          restoreMdScroll(current);
+        } else {
+          syncMdScrollFromEditor?.();
+        }
+        syncMdSourceHighlight();
+      };
+      preview.onSourceClick = (line) => focusEditorOnMdSourceLine(line);
       mdPreview = preview;
       return preview;
     });
@@ -602,25 +854,84 @@ async function ensureMdPreview(): Promise<MdPreview> {
 
 function applyMdPreview(tab: TabState | undefined) {
   const view = tab ? tabMdView(tab) : "off";
+  const wasHidden = mdHost.hidden;
+  if (view === "off") {
+    if (mdPreviewOwnerTabId && !wasHidden) {
+      const owner = tabs.get(mdPreviewOwnerTabId);
+      if (owner) {
+        captureMdScroll(owner);
+      }
+    }
+    pendingMdScrollTabId = null;
+    mdPreviewOwnerTabId = null;
+  }
   const split = view === "split";
   const reader = view === "reader";
   editorHost.classList.toggle("md-split", split);
   editorHost.classList.toggle("md-reader", reader);
   mdHost.hidden = view === "off";
   mdGutter.hidden = !split;
-  if (tab?.viewMode !== "hex") {
+  if (tab?.viewMode === "text") {
     monacoHost.hidden = reader;
   }
   if (view !== "off" && tab) {
+    const needRestore = wasHidden || mdPreviewOwnerTabId !== tab.id;
+    mdPreviewOwnerTabId = tab.id;
+    if (needRestore) {
+      pendingMdScrollTabId = tab.id;
+      restoreMdScroll(tab);
+    }
     const source = tab.model.getValue();
     const tabId = tab.id;
     void ensureMdPreview().then((preview) => {
       const current = activeTabId ? tabs.get(activeTabId) : undefined;
       if (current?.id === tabId && tabShowsMdPreview(current)) {
-        preview.render(source, true);
+        preview.render(source, true, mdPreviewBaseDir(current ?? tab));
+        syncMdSourceHighlight();
       }
     });
+  } else {
+    mdPreview?.highlightSourceLine(null);
   }
+}
+
+function syncMdSourceHighlight() {
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  if (!tab || !tabShowsMdPreview(tab) || !isMarkdownLanguage(tab.languageId) || !editor) {
+    mdPreview?.highlightSourceLine(null);
+    return;
+  }
+  const line = editor.getPosition()?.lineNumber ?? null;
+  // Color the matching preview block only. Scrolling it into view fights the
+  // proportional editor↔preview sync and makes the preview jump on every keystroke.
+  mdPreview?.highlightSourceLine(line);
+}
+
+function focusEditorOnMdSourceLine(line: number) {
+  if (!editor) {
+    return;
+  }
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  if (!tab || !tabShowsMdPreview(tab) || !isMarkdownLanguage(tab.languageId)) {
+    return;
+  }
+  // Keep preview where the user clicked; don't let editor reveal re-sync the preview away.
+  suppressMdEditorScrollSyncUntil = performance.now() + 200;
+  const model = editor.getModel();
+  const maxLine = model?.getLineCount() ?? line;
+  const target = Math.max(1, Math.min(line, maxLine));
+  editor.revealLineInCenter(target);
+  editor.setPosition({ lineNumber: target, column: 1 });
+  editor.setSelection({
+    startLineNumber: target,
+    startColumn: 1,
+    endLineNumber: target,
+    endColumn: 1,
+  });
+  if (tabMdView(tab) !== "reader") {
+    editor.focus();
+  }
+  mdPreview?.highlightSourceLine(target);
 }
 
 function syncMdViewButton(
@@ -645,6 +956,23 @@ function syncMdPreviewButton() {
   const disabled = !tab || !markdown;
   syncMdViewButton(mdButton, view === "split", disabled, "toolbar.mdOn", "toolbar.mdOff");
   syncMdViewButton(readButton, view === "reader", disabled, "toolbar.readOn", "toolbar.readOff");
+  syncMdEditToolbar(isMarkdownTextEditing());
+}
+
+function isMarkdownTextEditing(): boolean {
+  const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+  return (
+    !!tab &&
+    isMarkdownLanguage(tab.languageId) &&
+    tab.viewMode !== "hex" &&
+    tab.viewMode !== "doc" &&
+    tab.mdView !== "reader" &&
+    !tab.readOnly
+  );
+}
+
+function isMarkdownEditorFocused(): boolean {
+  return !!editor?.hasTextFocus() && isMarkdownTextEditing();
 }
 
 async function setMdView(next: Exclude<MdView, "off">) {
@@ -666,12 +994,15 @@ async function setMdView(next: Exclude<MdView, "off">) {
 
 function toggleWordWrap() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-  if (!tab || tab.viewMode === "hex" || !editor) {
+  if (!tab || tab.viewMode !== "text" || !editor) {
     return;
   }
   wordWrapEnabled = !wordWrapEnabled;
   editor.updateOptions({ wordWrap: wordWrapEnabled ? "on" : "off" });
   syncWrapButton();
+  void invoke("update_settings", { wordWrap: wordWrapEnabled }).catch((err) => {
+    console.warn("failed to save word wrap", err);
+  });
 }
 
 function fillHexLabels() {
@@ -693,23 +1024,54 @@ function captureHexState(tab: TabState) {
 
 async function showTabView(tab: TabState) {
   if (tab.viewMode === "hex") {
-    await syncBytesFromText(tab);
+    if (!isDocTab(tab)) {
+      await syncBytesFromText(tab);
+    }
     monacoHost.hidden = true;
+    pdfHost.hidden = true;
+    epubHost.hidden = true;
     hexHost.hidden = false;
     applyHexBuffer(tab);
     fillHexLabels();
     hexEditor?.focus();
     closeFind();
+  } else if (tab.viewMode === "doc") {
+    if (tab.textStale && hexEditor) {
+      captureHexState(tab);
+    }
+    hexHost.hidden = true;
+    monacoHost.hidden = true;
+    closeFind();
+    if (isEpubTab(tab)) {
+      pdfHost.hidden = true;
+      epubHost.hidden = false;
+      if (tab.path && epubViewer) {
+        await epubViewer.open(tab.path, { page: tab.pdfPage, scale: tab.pdfScale });
+      }
+    } else {
+      epubHost.hidden = true;
+      pdfHost.hidden = false;
+      if (tab.path && pdfViewer) {
+        await pdfViewer.open(tab.path, { page: tab.pdfPage, scale: tab.pdfScale });
+      }
+    }
   } else {
     if (tab.textStale && hexEditor) {
       captureHexState(tab);
     }
-    await syncTextFromBytes(tab);
+    if (!isDocTab(tab)) {
+      await syncTextFromBytes(tab);
+    }
     hexHost.hidden = true;
+    pdfHost.hidden = true;
+    epubHost.hidden = true;
     monacoHost.hidden = false;
-    editor?.focus();
+    if (tabMdView(tab) !== "reader") {
+      editor?.focus();
+    }
   }
   applyMdPreview(tab);
+  applyTabReadOnly(tab);
   syncHexButton();
   layoutEditor();
   updateStatusBar();
@@ -720,7 +1082,15 @@ async function toggleHexView() {
   if (!tab) {
     return;
   }
-  tab.viewMode = tab.viewMode === "hex" ? "text" : "hex";
+  if (tab.viewMode === "hex") {
+    captureHexState(tab);
+    tab.viewMode = isDocTab(tab) ? "doc" : "text";
+  } else {
+    if (tab.viewMode === "doc") {
+      capturePdfState(tab);
+    }
+    tab.viewMode = "hex";
+  }
   await showTabView(tab);
   schedulePersistSession();
 }
@@ -748,6 +1118,9 @@ async function loadMoreForTab(tab: TabState) {
     return;
   }
   if (tab.viewMode === "text" && tab.dirty) {
+    return;
+  }
+  if (tab.viewMode === "doc") {
     return;
   }
   if (loadingMore.has(tab.id)) {
@@ -822,6 +1195,16 @@ function pathKey(path: string): string {
   return path.replace(/^\\\\\?\\/, "").replace(/\\/g, "/").toLowerCase();
 }
 
+let sessionDirKey = "";
+
+function isSessionCachePath(path: string | null | undefined): boolean {
+  if (!path || !sessionDirKey) {
+    return false;
+  }
+  const key = pathKey(path);
+  return key === sessionDirKey || key.startsWith(`${sessionDirKey}/`);
+}
+
 function stampsEqual(a: DiskStamp | null, b: DiskStamp | null): boolean {
   return !!a && !!b && a.mtimeMs === b.mtimeMs && a.size === b.size;
 }
@@ -830,7 +1213,7 @@ function openPaths(): string[] {
   const seen = new Set<string>();
   const paths: string[] = [];
   for (const tab of tabs.values()) {
-    if (!tab.path) {
+    if (!tab.path || isSessionCachePath(tab.path)) {
       continue;
     }
     const key = pathKey(tab.path);
@@ -849,7 +1232,11 @@ async function stampTabFromDisk(tab: TabState) {
     return;
   }
   try {
-    tab.diskStamp = await invoke<DiskStamp>("stat_text_file", { path: tab.path });
+    const stat = await invoke<DiskStamp>("stat_text_file", { path: tab.path });
+    tab.diskStamp = { mtimeMs: stat.mtimeMs, size: stat.size };
+    if (stat.readonly) {
+      tab.readOnly = true;
+    }
   } catch {
     tab.diskStamp = null;
   }
@@ -857,6 +1244,32 @@ async function stampTabFromDisk(tab: TabState) {
 
 async function reloadTabFromDisk(tab: TabState) {
   if (!tab.path || !editor) {
+    return;
+  }
+
+  if (isDocTab(tab)) {
+    try {
+      const file = await loadFilePrefix(tab.path);
+      tab.bytes = file.bytes;
+      tab.diskSize = file.diskSize;
+      tab.diskLoaded = file.diskLoaded;
+      tab.bytesStale = false;
+      tab.textStale = false;
+      tab.hexHistory = emptyHexHistory();
+    } catch {
+      await handleMissingOpenFiles([tab]);
+      return;
+    }
+    markTabClean(tab);
+    tab.ignoredStamp = null;
+    await stampTabFromDisk(tab);
+    renderTabs();
+    if (tab.id === activeTabId) {
+      await showTabView(tab);
+    } else {
+      updateStatusForActive();
+    }
+    schedulePersistSession();
     return;
   }
 
@@ -1128,6 +1541,12 @@ function languageLabel(id: string): string {
   if (id === PLAINTEXT) {
     return t("tab.plainText");
   }
+  if (id === PDF_LANGUAGE) {
+    return t("tab.pdf");
+  }
+  if (id === EPUB_LANGUAGE) {
+    return t("tab.epub");
+  }
   const plugin = plugins.find((p) => p.id === id);
   return plugin?.aliases[0] ?? id;
 }
@@ -1159,7 +1578,7 @@ function fillLanguageMenu() {
 
 function canFormatActive() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-  if (!tab || tab.viewMode === "hex") {
+  if (!tab || tab.viewMode !== "text" || tab.readOnly) {
     return false;
   }
   return languageHasFormatter(tab.languageId, formatterCommands);
@@ -1260,6 +1679,7 @@ function registerEditorContextMenu() {
   canFormatKey = editor.createContextKey("lapeditor.canFormat", canFormatActive());
   hasSelectionKey = editor.createContextKey("lapeditor.hasSelection", false);
   canPasteKey = editor.createContextKey("lapeditor.canPaste", false);
+  canCutKey = editor.createContextKey("lapeditor.canCut", false);
   syncEditActions();
 
   const store: monaco.IDisposable[] = [];
@@ -1269,7 +1689,7 @@ function registerEditorContextMenu() {
       key: "editor.context.cut",
       icon: "lap-cut",
       order: 1,
-      precondition: ContextKeyExpr.has("lapeditor.hasSelection"),
+      precondition: ContextKeyExpr.has("lapeditor.canCut"),
       run: () => void runCut(),
     },
     {
@@ -1367,7 +1787,7 @@ function applyFormatIndent(indent: FormatIndent) {
 
 async function formatActive() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-  if (!tab || !editor || tab.viewMode === "hex") {
+  if (!tab || !editor || tab.viewMode !== "text") {
     return;
   }
   if (!canFormatActive()) {
@@ -1479,12 +1899,14 @@ function fillEncodingMenu() {
   for (const item of ENCODING_MENU_ITEMS) {
     appendEncodingItem(item.id, t(item.useKey), "use", item.id === current);
   }
-  const sep = document.createElement("div");
-  sep.className = "popover-sep";
-  sep.setAttribute("role", "separator");
-  encodingMenu.appendChild(sep);
-  for (const item of ENCODING_MENU_ITEMS) {
-    appendEncodingItem(item.id, t(item.convertKey), "convert", false);
+  if (!tab?.readOnly) {
+    const sep = document.createElement("div");
+    sep.className = "popover-sep";
+    sep.setAttribute("role", "separator");
+    encodingMenu.appendChild(sep);
+    for (const item of ENCODING_MENU_ITEMS) {
+      appendEncodingItem(item.id, t(item.convertKey), "convert", false);
+    }
   }
 }
 
@@ -1497,6 +1919,7 @@ function setEncodingMenuOpen(open: boolean) {
     syntaxButton.setAttribute("aria-expanded", "false");
     saveMenu.hidden = true;
     saveMenuButton.setAttribute("aria-expanded", "false");
+    hideTrashMenu();
   }
   encodingMenu.hidden = !open;
   statusEncodingEl.setAttribute("aria-expanded", open ? "true" : "false");
@@ -1585,7 +2008,7 @@ async function useTabEncoding(tab: TabState, encoding: EncodingId) {
 }
 
 async function convertTabEncoding(tab: TabState, encoding: EncodingId) {
-  if (tab.encoding === encoding) {
+  if (tab.readOnly || tab.encoding === encoding) {
     return;
   }
   try {
@@ -1626,6 +2049,7 @@ function setLocaleMenuOpen(open: boolean) {
     syntaxButton.setAttribute("aria-expanded", "false");
     saveMenu.hidden = true;
     saveMenuButton.setAttribute("aria-expanded", "false");
+    hideTrashMenu();
   }
   localeMenu.hidden = !open;
   localeButton.setAttribute("aria-expanded", open ? "true" : "false");
@@ -1640,6 +2064,7 @@ function setSyntaxMenuOpen(open: boolean) {
     localeButton.setAttribute("aria-expanded", "false");
     saveMenu.hidden = true;
     saveMenuButton.setAttribute("aria-expanded", "false");
+    hideTrashMenu();
   }
   syntaxMenu.hidden = !open;
   syntaxButton.setAttribute("aria-expanded", open ? "true" : "false");
@@ -1653,9 +2078,128 @@ function setSaveMenuOpen(open: boolean) {
     localeButton.setAttribute("aria-expanded", "false");
     syntaxMenu.hidden = true;
     syntaxButton.setAttribute("aria-expanded", "false");
+    hideTrashMenu();
   }
   saveMenu.hidden = !open;
   saveMenuButton.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function hideTrashMenu() {
+  trashMenu.hidden = true;
+  trashButton.setAttribute("aria-expanded", "false");
+}
+
+function trashSummary(text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact.length > 120 ? `${compact.slice(0, 120)}…` : compact;
+}
+
+function trimTrash() {
+  if (recycleBinSize <= 0) {
+    return;
+  }
+  if (trashItems.length > recycleBinSize) {
+    trashItems.length = recycleBinSize;
+  }
+}
+
+function syncTrashButton() {
+  const enabled = recycleBinSize > 0;
+  trashButton.disabled = !enabled;
+  if (!enabled) {
+    hideTrashMenu();
+  }
+  const label = t("toolbar.trashTitle");
+  setTooltip(trashButton, label);
+  trashButton.setAttribute("aria-label", t("toolbar.trash"));
+}
+
+function fillTrashMenu() {
+  trashMenu.replaceChildren();
+  if (!trashItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "trash-menu-empty";
+    empty.textContent = t("toolbar.trashEmpty");
+    trashMenu.appendChild(empty);
+    return;
+  }
+  for (const item of trashItems) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "popover-item";
+    button.role = "menuitem";
+    button.dataset.trashId = item.id;
+    const title = document.createElement("span");
+    title.className = "trash-item-title";
+    title.textContent = trashSummary(item.content);
+    const meta = document.createElement("span");
+    meta.className = "trash-item-preview";
+    meta.textContent = languageLabel(item.languageId);
+    button.append(title, meta);
+    trashMenu.appendChild(button);
+  }
+}
+
+function setTrashMenuOpen(open: boolean) {
+  if (open) {
+    if (recycleBinSize <= 0) {
+      return;
+    }
+    fillTrashMenu();
+    encodingMenu.hidden = true;
+    statusEncodingEl.setAttribute("aria-expanded", "false");
+    localeMenu.hidden = true;
+    localeButton.setAttribute("aria-expanded", "false");
+    syntaxMenu.hidden = true;
+    syntaxButton.setAttribute("aria-expanded", "false");
+    saveMenu.hidden = true;
+    saveMenuButton.setAttribute("aria-expanded", "false");
+    trashMenu.hidden = false;
+    trashButton.setAttribute("aria-expanded", "true");
+    return;
+  }
+  hideTrashMenu();
+}
+
+function stashUntitledTab(tab: TabState) {
+  if (recycleBinSize <= 0 || tab.path || tab.readOnly || isDocTab(tab)) {
+    return;
+  }
+  const content = tab.model.getValue();
+  if (!content.trim()) {
+    return;
+  }
+  pendingContentWrites.set(tab.id, content);
+  contentWriteVersions.delete(tab.id);
+  trashItems.unshift({
+    id: tab.id,
+    title: tab.title,
+    untitledNumber: tab.untitledNumber,
+    content,
+    languageId: isDocTab(tab) ? PLAINTEXT : tab.languageId,
+    encoding: tab.encoding,
+    trashedAt: Date.now(),
+  });
+  trimTrash();
+}
+
+function restoreTrashItem(id: string) {
+  const index = trashItems.findIndex((item) => item.id === id);
+  if (index < 0) {
+    return;
+  }
+  const [item] = trashItems.splice(index, 1);
+  hideTrashMenu();
+  createTab({
+    id: item.id,
+    title: item.title,
+    untitledNumber: item.untitledNumber,
+    content: item.content,
+    languageId: item.languageId,
+    encoding: item.encoding,
+    dirty: true,
+  });
+  schedulePersistSession();
 }
 
 function syncLocaleButton() {
@@ -1683,7 +2227,7 @@ function applyTheme(theme: ThemeId) {
   if (tab && tabShowsMdPreview(tab)) {
     void ensureMdPreview().then((preview) => {
       preview.setTheme(currentTheme);
-      preview.render(tab.model.getValue(), true);
+      preview.render(tab.model.getValue(), true, mdPreviewBaseDir(tab));
     });
   }
   syncThemeButton();
@@ -1708,21 +2252,39 @@ const tabContextMenu = document.querySelector<HTMLDivElement>("#tab-context-menu
 const tabCtxFullPath = document.querySelector<HTMLButtonElement>("#tab-ctx-full-path")!;
 const tabCtxRelPath = document.querySelector<HTMLButtonElement>("#tab-ctx-rel-path")!;
 const tabCtxFileName = document.querySelector<HTMLButtonElement>("#tab-ctx-file-name")!;
+const tabCtxOpenFolder = document.querySelector<HTMLButtonElement>("#tab-ctx-open-folder")!;
 const tabCtxClose = document.querySelector<HTMLButtonElement>("#tab-ctx-close")!;
 let tabContextTabId: string | null = null;
 
 function hideTabContextMenu() {
   tabContextMenu.hidden = true;
   tabContextTabId = null;
+  const mdMenu = document.querySelector<HTMLDivElement>("#md-preview-context-menu");
+  if (mdMenu) {
+    mdMenu.hidden = true;
+  }
+}
+
+async function openInFileManager(path: string, isDir: boolean) {
+  try {
+    await invoke("open_in_file_manager", { path, isDir });
+  } catch (err) {
+    console.warn("failed to open in file manager", err);
+  }
 }
 
 function showTabContextMenu(tab: TabState, clientX: number, clientY: number) {
+  const mdMenu = document.querySelector<HTMLDivElement>("#md-preview-context-menu");
+  if (mdMenu) {
+    mdMenu.hidden = true;
+  }
   tabContextTabId = tab.id;
   const hasPath = !!tab.path;
   const rel = hasPath ? relativeToWorkspace(tab.path!, explorer?.getWorkspace() ?? null) : null;
   tabCtxFullPath.disabled = !hasPath;
   tabCtxRelPath.disabled = !rel;
   tabCtxFileName.disabled = !hasPath;
+  tabCtxOpenFolder.disabled = !hasPath;
   tabCtxClose.disabled = false;
 
   tabContextMenu.hidden = false;
@@ -1760,6 +2322,13 @@ function bindTabContextMenu() {
       void writeClipboardText(basename(tab.path));
     }
   });
+  tabCtxOpenFolder.addEventListener("click", () => {
+    const tab = tabContextTabId ? tabs.get(tabContextTabId) : undefined;
+    hideTabContextMenu();
+    if (tab?.path) {
+      void openInFileManager(tab.path, false);
+    }
+  });
   tabCtxClose.addEventListener("click", () => {
     const id = tabContextTabId;
     hideTabContextMenu();
@@ -1779,18 +2348,33 @@ function bindTabContextMenu() {
   });
   window.addEventListener("blur", () => hideTabContextMenu());
   window.addEventListener("resize", () => hideTabContextMenu());
+  tabBar.addEventListener("mousedown", (ev) => {
+    // Keep the editor from treating tab-bar clicks as a cursor jump to line 1.
+    ev.preventDefault();
+  });
 }
 
 function renderTabs() {
   tabBar.innerHTML = "";
   for (const tab of tabs.values()) {
     const el = document.createElement("div");
-    el.className = `tab${tab.id === activeTabId ? " active" : ""}`;
+    el.className = `tab${tab.id === activeTabId ? " active" : ""}${isReadOnlyTab(tab) ? " readonly" : ""}`;
     el.dataset.tabId = tab.id;
+
+    if (isPdfTab(tab) || isEpubTab(tab)) {
+      const kind = document.createElement("img");
+      kind.className = "tab-kind-icon";
+      kind.src = isPdfTab(tab) ? pdfIcon : bookIcon;
+      kind.alt = "";
+      kind.setAttribute("aria-hidden", "true");
+      el.appendChild(kind);
+    }
 
     const title = document.createElement("span");
     title.className = "tab-title";
     title.textContent = tab.dirty ? `* ${tab.title}` : tab.title;
+    title.dataset.tooltipPlacement = "below";
+    setTooltip(title, tab.title);
 
     const close = document.createElement("button");
     close.type = "button";
@@ -1804,11 +2388,17 @@ function renderTabs() {
 
     el.appendChild(title);
     el.appendChild(close);
-    el.addEventListener("click", () => activateTab(tab.id));
+    el.addEventListener("click", () => {
+      if (tab.id !== activeTabId) {
+        activateTab(tab.id);
+      }
+    });
     el.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      activateTab(tab.id);
+      if (tab.id !== activeTabId) {
+        activateTab(tab.id);
+      }
       showTabContextMenu(tab, ev.clientX, ev.clientY);
     });
     tabBar.appendChild(el);
@@ -1831,6 +2421,7 @@ function renderTabs() {
 function syncLanguageSelect() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
   syntaxLabel.textContent = languageLabel(tab?.languageId ?? PLAINTEXT);
+  syntaxButton.disabled = !tab || isDocTab(tab);
 }
 
 function updateStatusForActive() {
@@ -1888,7 +2479,7 @@ function eolLabel(kind: EolKind): string {
 
 function toggleActiveEol() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-  if (!tab || tab.viewMode === "hex") {
+  if (!tab || tab.readOnly || tab.viewMode !== "text") {
     return;
   }
   const next =
@@ -1931,9 +2522,17 @@ function updateStatusBar() {
     statusCursorEl.replaceChildren();
     statusEolEl.textContent = "";
     statusEncodingEl.textContent = "";
+    statusReadonlyEl.hidden = true;
+    statusEolEl.classList.add("status-clickable");
+    statusEolEl.tabIndex = 0;
     setEncodingMenuOpen(false);
     return;
   }
+  statusReadonlyEl.hidden = !isReadOnlyTab(tab);
+  statusReadonlyEl.textContent = isReadOnlyTab(tab) ? t("status.readOnly") : "";
+  const canToggleEol = !isReadOnlyTab(tab) && tab.viewMode === "text";
+  statusEolEl.classList.toggle("status-clickable", canToggleEol);
+  statusEolEl.tabIndex = canToggleEol ? 0 : -1;
 
   if (tab.viewMode === "hex") {
     const loaded = tab.bytes.length;
@@ -1951,6 +2550,22 @@ function updateStatusBar() {
     ]);
     statusEolEl.textContent = "";
     statusEncodingEl.textContent = encodingStatusLabel(tab.encoding);
+    return;
+  }
+
+  if (tab.viewMode === "doc") {
+    const epub = isEpubTab(tab);
+    const state = epub ? epubViewer?.capture() : pdfViewer?.capture();
+    const page = state?.page ?? tab.pdfPage;
+    const count = (epub ? epubViewer?.pageCount() : pdfViewer?.pageCount()) ?? 0;
+    setStatusLabeledItems(statusStatsEl, [
+      { label: t(epub ? "status.chapter" : "status.page"), value: count ? `${page} / ${count}` : page },
+    ]);
+    setStatusLabeledItems(statusCursorEl, [
+      { label: t("status.zoom"), value: `${Math.round((state?.scale ?? tab.pdfScale) * 100)}%` },
+    ]);
+    statusEolEl.textContent = "";
+    statusEncodingEl.textContent = t(epub ? "tab.epub" : "tab.pdf");
     return;
   }
 
@@ -1979,10 +2594,15 @@ function activateTab(id: string) {
   if (!editor) {
     return;
   }
+  if (activeTabId === id) {
+    return;
+  }
   if (activeTabId && activeTabId !== id) {
     const prev = tabs.get(activeTabId);
     if (prev) {
       prev.viewState = editor.saveViewState();
+      captureMdScroll(prev);
+      capturePdfState(prev);
       if (prev.viewMode === "hex" && hexEditor) {
         captureHexState(prev);
       }
@@ -1995,9 +2615,14 @@ function activateTab(id: string) {
   }
 
   activeTabId = id;
+  suppressMdEditorScrollSyncUntil = performance.now() + 200;
+  suppressMdPreviewScrollSyncUntil = performance.now() + 200;
   editor.setModel(tab.model);
   if (tab.viewState) {
     editor.restoreViewState(tab.viewState);
+  } else {
+    editor.setScrollTop(0);
+    editor.setScrollLeft(0);
   }
   renderTabs();
   syncLanguageSelect();
@@ -2023,6 +2648,10 @@ function createTab(options?: {
   diskLoaded?: number;
   viewMode?: ViewMode;
   mdView?: MdView;
+  mdScrollTop?: number;
+  pdfPage?: number;
+  pdfScale?: number;
+  readOnly?: boolean;
 }): TabState {
   const id = options?.id ?? `tab-${tabSeq++}`;
   const numeric = Number(id.replace(/^tab-/, ""));
@@ -2043,7 +2672,10 @@ function createTab(options?: {
     title = t("tab.untitled", { n });
   }
   const languageId = options?.languageId ?? PLAINTEXT;
-  const model = monaco.editor.createModel(options?.content ?? "", languageId);
+  const model = monaco.editor.createModel(
+    options?.content ?? "",
+    languageId === PDF_LANGUAGE || languageId === EPUB_LANGUAGE ? PLAINTEXT : languageId,
+  );
   const tab: TabState = {
     id,
     title,
@@ -2054,10 +2686,15 @@ function createTab(options?: {
     model,
     viewState: options?.viewState ?? null,
     dirty: options?.dirty ?? false,
+    readOnly:
+      (options?.readOnly ?? false) ||
+      isDocPath(path) ||
+      languageId === PDF_LANGUAGE ||
+      languageId === EPUB_LANGUAGE,
     savedVersionId: 0,
     diskStamp: null,
     ignoredStamp: null,
-    viewMode: options?.viewMode === "hex" ? "hex" : "text",
+    viewMode: parseViewMode(options?.viewMode, path),
     bytes: options?.bytes ?? new Uint8Array(0),
     diskSize: options?.diskSize ?? options?.bytes?.length ?? 0,
     diskLoaded: options?.diskLoaded ?? options?.bytes?.length ?? 0,
@@ -2065,6 +2702,9 @@ function createTab(options?: {
     textStale: false,
     byteMarkIds: [],
     mdView: options?.mdView && isMarkdownLanguage(languageId) ? options.mdView : "off",
+    mdScrollTop: Math.max(0, options?.mdScrollTop ?? 0),
+    pdfPage: Math.max(1, Math.floor(options?.pdfPage ?? 1)),
+    pdfScale: clampPdfZoom(options?.pdfScale ?? 1),
     hexHistory: emptyHexHistory(),
   };
 
@@ -2091,7 +2731,7 @@ function createTab(options?: {
     schedulePersistSession();
     if (tab.id === activeTabId && tabShowsMdPreview(tab)) {
       void ensureMdPreview().then((preview) => {
-        preview.render(tab.model.getValue());
+        preview.render(tab.model.getValue(), false, mdPreviewBaseDir(tab));
       });
     }
   });
@@ -2131,6 +2771,7 @@ function disposeTabs(ids: string[]) {
     }
     tab.model.dispose();
     tabs.delete(id);
+    contentWriteVersions.delete(id);
   }
   if (closingActive || (activeTabId != null && !tabs.has(activeTabId))) {
     activeTabId = null;
@@ -2192,6 +2833,7 @@ async function closeTab(id: string) {
     }
   }
 
+  stashUntitledTab(tab);
   disposeTab(id);
   if (activeTabId !== id) {
     renderTabs();
@@ -2204,17 +2846,16 @@ async function openPath(path: string, reveal?: { line: number; column: number; e
   const existing = [...tabs.values()].find(
     (tab) => tab.path && pathKey(tab.path) === pathKey(path),
   );
-  if (existing) {
+    if (existing) {
     activateTab(existing.id);
     if (reveal && existing.viewMode === "hex") {
-      existing.viewMode = "text";
+      existing.viewMode = isDocTab(existing) ? "doc" : "text";
       await showTabView(existing);
     }
-  } else {
+  } else if (isSessionCachePath(path)) {
     const file = await loadFilePrefix(path);
     const languageId =
       (await invoke<string | null>("language_id_for_path", { path })) ?? PLAINTEXT;
-
     const tab = createTab({
       title: basename(path),
       path,
@@ -2224,8 +2865,34 @@ async function openPath(path: string, reveal?: { line: number; column: number; e
       bytes: file.bytes,
       diskSize: file.diskSize,
       diskLoaded: file.diskLoaded,
+      readOnly: true,
     });
     await stampTabFromDisk(tab);
+    applyTabReadOnly(tab);
+    schedulePersistSession();
+  } else {
+    const doc = isDocPath(path);
+    const file = await loadFilePrefix(path);
+    const languageId = isPdfPath(path)
+      ? PDF_LANGUAGE
+      : isEpubPath(path)
+        ? EPUB_LANGUAGE
+        : (await invoke<string | null>("language_id_for_path", { path })) ?? PLAINTEXT;
+
+    const tab = createTab({
+      title: basename(path),
+      path,
+      languageId,
+      encoding: file.encoding,
+      content: doc ? "" : file.text,
+      bytes: file.bytes,
+      diskSize: file.diskSize,
+      diskLoaded: file.diskLoaded,
+      viewMode: doc ? "doc" : "text",
+      readOnly: doc,
+    });
+    await stampTabFromDisk(tab);
+    applyTabReadOnly(tab);
     schedulePersistSession();
   }
 
@@ -2318,6 +2985,9 @@ async function pickSavePath(tab: TabState, title: string): Promise<string | null
 }
 
 async function saveTab(tab: TabState, options?: { saveAs?: boolean }): Promise<boolean> {
+  if (tab.viewMode === "doc") {
+    return true;
+  }
   const saveAs = options?.saveAs === true;
   const previousPath = tab.path;
   let path = saveAs ? null : tab.path;
@@ -2337,6 +3007,16 @@ async function saveTab(tab: TabState, options?: { saveAs?: boolean }): Promise<b
       monaco.editor.setModelLanguage(tab.model, detected);
       syncLanguageSelect();
     }
+  }
+
+  if (isSessionCachePath(path)) {
+    path = await pickSavePath(tab, t("dialog.saveAsFile"));
+    if (!path || isSessionCachePath(path)) {
+      return false;
+    }
+    tab.path = path;
+    tab.title = basename(path);
+    tab.untitledNumber = null;
   }
 
   if (tab.viewMode === "hex" && hexEditor) {
@@ -2359,8 +3039,10 @@ async function saveTab(tab: TabState, options?: { saveAs?: boolean }): Promise<b
   tab.diskSize = tab.bytes.length + tailLen;
   tab.bytesStale = false;
   markTabClean(tab);
+  tab.readOnly = false;
   tab.ignoredStamp = null;
   await stampTabFromDisk(tab);
+  applyTabReadOnly(tab);
   renderTabs();
   updateStatusForActive();
   schedulePersistSession();
@@ -2371,6 +3053,10 @@ async function saveTab(tab: TabState, options?: { saveAs?: boolean }): Promise<b
 async function saveActive() {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
   if (!tab) {
+    return;
+  }
+  if (tab.readOnly) {
+    await saveTab(tab, { saveAs: true });
     return;
   }
   await saveTab(tab);
@@ -2386,7 +3072,7 @@ async function saveActiveAs() {
 
 function setActiveLanguage(languageId: string) {
   const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-  if (!tab) {
+  if (!tab || isDocTab(tab)) {
     return;
   }
   tab.languageId = languageId;
@@ -2416,8 +3102,33 @@ async function restoreSession(): Promise<boolean> {
   }
 
   restoringSession = true;
+  let trashCapped = false;
   try {
-    const pending = session.tabs.filter((item) => item.path || item.content);
+    const rows = session.tabs ?? [];
+    trashItems.length = 0;
+    const trashRows = rows
+      .filter((item) => item.trashed)
+      .sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0));
+    for (const item of trashRows) {
+      const content = item.content ?? "";
+      if (!content.trim()) {
+        continue;
+      }
+      trashItems.push({
+        id: item.id,
+        title: item.title || "",
+        untitledNumber: parseUntitledNumber(item.title),
+        content,
+        languageId: item.languageId || PLAINTEXT,
+        encoding: normalizeEncoding(item.encoding),
+        trashedAt: item.trashedAt ?? 0,
+      });
+    }
+    const trashBefore = trashItems.length;
+    trimTrash();
+    trashCapped = trashItems.length !== trashBefore;
+
+    const pending = rows.filter((item) => !item.trashed && (item.path || item.content));
     const loaded = await Promise.all(
       pending.map(async (item) => {
         let content = item.content;
@@ -2433,13 +3144,14 @@ async function restoreSession(): Promise<boolean> {
                 setTimeout(() => reject(new Error("timeout")), 4000);
               }),
             ]);
-            content = file.text;
+            const doc = isDocPath(item.path);
+            content = doc ? "" : file.text;
             encoding = file.encoding;
             bytes = file.bytes;
             diskSize = file.diskSize;
             diskLoaded = file.diskLoaded;
           } catch {
-            content = item.content;
+            content = isDocPath(item.path) ? "" : item.content;
           }
         }
         return { item, content, encoding, bytes, diskSize, diskLoaded };
@@ -2448,24 +3160,35 @@ async function restoreSession(): Promise<boolean> {
 
     const stampTabs: TabState[] = [];
     for (const row of loaded) {
+      const path = row.item.path;
+      const readOnly =
+        row.item.readOnly === true || isSessionCachePath(path) || isDocPath(path);
       const tab = createTab({
         id: row.item.id,
         title: row.item.title,
-        path: row.item.path,
-        untitledNumber: row.item.path ? null : parseUntitledNumber(row.item.title),
-        languageId: row.item.languageId || PLAINTEXT,
+        path,
+        untitledNumber: path ? null : parseUntitledNumber(row.item.title),
+        languageId: isPdfPath(path)
+          ? PDF_LANGUAGE
+          : isEpubPath(path)
+            ? EPUB_LANGUAGE
+            : row.item.languageId || PLAINTEXT,
         encoding: row.encoding,
-        content: row.content,
-        dirty: row.item.dirty,
+        content: isDocPath(path) ? "" : row.content,
+        dirty: !readOnly && row.item.dirty && !isDocPath(path),
+        readOnly,
         viewState: row.item.viewState,
         activate: false,
         bytes: row.bytes,
         diskSize: row.diskSize,
         diskLoaded: row.diskLoaded,
-        viewMode: row.item.viewMode === "hex" ? "hex" : "text",
+        viewMode: parseViewMode(row.item.viewMode, path),
         mdView: parseMdView(row.item.mdView ?? row.item.mdPreview),
+        mdScrollTop: row.item.mdScrollTop ?? 0,
+        pdfPage: row.item.pdfPage ?? 1,
+        pdfScale: row.item.pdfScale ?? 1,
       });
-      if (row.item.path) {
+      if (path) {
         if (
           row.item.dirty &&
           row.item.lastDiskMtimeMs != null &&
@@ -2489,6 +3212,9 @@ async function restoreSession(): Promise<boolean> {
     }
   } finally {
     restoringSession = false;
+  }
+  if (trashCapped) {
+    void persistSession();
   }
   return tabs.size > 0;
 }
@@ -2519,6 +3245,21 @@ async function bindSessionFlush() {
 function bindUi() {
   bindConfirmDialog();
   bindNameDialog();
+  bindMdEdit({
+    getEditor: () => editor,
+    isMarkdownEditing: isMarkdownTextEditing,
+    ensureSaved: async () => {
+      const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+      if (!tab || !isMarkdownTextEditing()) {
+        return null;
+      }
+      if (tab.path) {
+        return tab.path;
+      }
+      const ok = await saveTab(tab);
+      return ok && tab.path ? tab.path : null;
+    },
+  });
   document.querySelector("#btn-new")!.addEventListener("click", () => createTab());
   document.querySelector("#btn-open")!.addEventListener("click", () => void openFile());
   saveButton.addEventListener("click", () => {
@@ -2541,6 +3282,19 @@ function bindUi() {
   });
   document.querySelector("#btn-find")!.addEventListener("click", () => {
     openFind();
+  });
+  trashButton.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    setTrashMenuOpen(trashMenu.hidden);
+  });
+  trashMenu.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const item = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-trash-id]");
+    const id = item?.dataset.trashId;
+    if (!id) {
+      return;
+    }
+    restoreTrashItem(id);
   });
   hexButton.addEventListener("click", () => void toggleHexView());
   wrapButton.innerHTML = wrapButtonIcon();
@@ -2615,7 +3369,14 @@ function bindUi() {
       fillHexLabels();
       syncHexButton();
       syncEditActions();
+      syncTrashButton();
+      if (!trashMenu.hidden) {
+        fillTrashMenu();
+      }
       syncFindLocale();
+      syncMdEditLocale();
+      pdfViewer?.syncLocale();
+      epubViewer?.syncLocale();
       explorer?.syncLocale();
       searchUi?.syncLocale();
       settingsUi?.syncLocale();
@@ -2646,6 +3407,10 @@ function bindUi() {
     if (!activeTabId || !tabs.has(activeTabId)) {
       return;
     }
+    const encodingTab = tabs.get(activeTabId);
+    if (encodingTab?.viewMode !== "text") {
+      return;
+    }
     setEncodingMenuOpen(encodingMenu.hidden);
   });
   statusEncodingEl.addEventListener("keydown", (ev) => {
@@ -2672,7 +3437,7 @@ function bindUi() {
     }
     if (action === "use") {
       void useTabEncoding(tab, encoding);
-    } else {
+    } else if (!tab.readOnly) {
       void convertTabEncoding(tab, encoding);
     }
   });
@@ -2681,6 +3446,7 @@ function bindUi() {
     setSyntaxMenuOpen(false);
     setSaveMenuOpen(false);
     setEncodingMenuOpen(false);
+    hideTrashMenu();
     hideTabContextMenu();
   });
   window.addEventListener("keydown", (ev) => {
@@ -2689,6 +3455,7 @@ function bindUi() {
       setSyntaxMenuOpen(false);
       setSaveMenuOpen(false);
       setEncodingMenuOpen(false);
+      hideTrashMenu();
       hideTabContextMenu();
     }
   });
@@ -2730,6 +3497,42 @@ function bindUi() {
   } catch (err) {
     console.warn("failed to bind add-language dialog", err);
   }
+  syncTrashButton();
+
+  window.addEventListener(
+    "keydown",
+    (ev) => {
+      const mod = ev.ctrlKey || ev.metaKey;
+      if (!mod || ev.altKey) {
+        return;
+      }
+      const key = ev.key.toLowerCase();
+      const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+      if (key === "v" && !ev.shiftKey && editor?.hasTextFocus() && tab?.viewMode === "text") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void runPaste();
+        return;
+      }
+      if (!isMarkdownEditorFocused()) {
+        return;
+      }
+      if (key === "b" && !ev.shiftKey) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        mdBold();
+      } else if (key === "i" && !ev.shiftKey) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        mdItalic();
+      } else if (key === "k" && !ev.shiftKey) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void mdLink();
+      }
+    },
+    true,
+  );
 
   window.addEventListener("keydown", (ev) => {
     const mod = ev.ctrlKey || ev.metaKey;
@@ -2806,7 +3609,11 @@ function disableReleaseContextMenu() {
       target instanceof Element &&
       (target.closest(".monaco-editor") ||
         target.closest(".tab") ||
-        target.closest("#tab-context-menu"))
+        target.closest("#tab-context-menu") ||
+        target.closest("#md-host") ||
+        target.closest("#md-preview-context-menu") ||
+        target.closest("#explorer-tree") ||
+        target.closest("#explorer-context-menu"))
     ) {
       return;
     }
@@ -2828,6 +3635,13 @@ async function main() {
   const locale = await loadLocale(settings.locale || "en");
   fillLocaleMenu(locales, locale.id);
   mdSplitRatio = clampMdSplit(settings.mdSplit ?? MD_SPLIT_DEFAULT);
+  wordWrapEnabled = settings.wordWrap === true;
+  recycleBinSize = normalizeRecycleBinSize(settings.recycleBinSize);
+  try {
+    sessionDirKey = pathKey(await invoke<string>("session_dir"));
+  } catch (err) {
+    console.warn("failed to resolve session dir", err);
+  }
   applyTheme(settings.theme === "light" ? "light" : "dark");
   applyDomI18n();
   await titlebarPromise;
@@ -2838,6 +3652,15 @@ async function main() {
   settingsUi = bindSettings({
     getEditor: () => editor,
     onPersist: (patch) => {
+      if (patch.recycleBinSize != null) {
+        recycleBinSize = normalizeRecycleBinSize(patch.recycleBinSize);
+        trimTrash();
+        schedulePersistSession();
+        syncTrashButton();
+        if (!trashMenu.hidden) {
+          fillTrashMenu();
+        }
+      }
       void invoke("update_settings", patch).catch((err) => {
         console.warn("failed to save editor settings", err);
       });
@@ -2846,6 +3669,7 @@ async function main() {
   settingsUi.applyFromSettings(
     settings.fontFamily ?? DEFAULT_FONT_FAMILY,
     settings.fontSize ?? DEFAULT_FONT_SIZE,
+    recycleBinSize,
   );
   explorer = bindExplorer({
     onOpenFile: (path) => {
@@ -2861,6 +3685,7 @@ async function main() {
     onWorkspaceChange: (path) => {
       searchUi?.setWorkspace(path);
     },
+    isProtectedPath: (path) => isSessionCachePath(path),
   });
   searchUi = bindSearch({
     explorer: () => explorer,
@@ -2903,6 +3728,8 @@ async function main() {
       const tab = activeTabId ? tabs.get(activeTabId) : undefined;
       return !!tab && tabMdView(tab) === "split";
     },
+    shouldIgnoreEditorScroll: () => performance.now() < suppressMdEditorScrollSyncUntil,
+    shouldIgnorePreviewScroll: () => performance.now() < suppressMdPreviewScrollSyncUntil,
   }).fromEditor;
   syncHexButton();
 
@@ -2924,11 +3751,12 @@ async function main() {
     value: "",
     language: PLAINTEXT,
     theme: monacoThemeName(currentTheme),
+    readOnly: false,
     automaticLayout: false,
     fontSize: settings.fontSize ?? DEFAULT_FONT_SIZE,
     fontFamily: settings.fontFamily ?? DEFAULT_FONT_FAMILY,
     minimap: { enabled: false },
-    wordWrap: "off",
+    wordWrap: wordWrapEnabled ? "on" : "off",
     folding: true,
     foldingStrategy: "indentation",
     showFoldingControls: "mouseover",
@@ -2957,7 +3785,11 @@ async function main() {
     getEditor: () => editor,
     isHexView: () => {
       const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-      return tab?.viewMode === "hex";
+      return tab?.viewMode === "hex" || tab?.viewMode === "doc";
+    },
+    isReadOnly: () => {
+      const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+      return !!tab?.readOnly;
     },
     onLayout: layoutEditor,
   });
@@ -2985,15 +3817,38 @@ async function main() {
     },
   });
   fillHexLabels();
+  pdfViewer = new PdfViewer(pdfHost);
+  pdfViewer.setOnChange(() => {
+    const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+    if (!tab || tab.viewMode !== "doc" || isEpubTab(tab)) {
+      return;
+    }
+    capturePdfState(tab);
+    updateStatusBar();
+    schedulePersistSession();
+  });
+  epubViewer = new EpubViewer(epubHost);
+  epubViewer.setOnChange(() => {
+    const tab = activeTabId ? tabs.get(activeTabId) : undefined;
+    if (!tab || tab.viewMode !== "doc" || !isEpubTab(tab)) {
+      return;
+    }
+    capturePdfState(tab);
+    updateStatusBar();
+    schedulePersistSession();
+  });
   layoutEditor();
-  editor.onDidChangeCursorPosition(() => updateStatusBar());
+  editor.onDidChangeCursorPosition(() => {
+    updateStatusBar();
+    syncMdSourceHighlight();
+  });
   editor.onDidChangeCursorSelection(() => syncEditActions());
   editor.onDidFocusEditorText(() => syncEditActions());
   editor.onDidBlurEditorText(() => syncEditActions());
   editor.onDidScrollChange(() => {
     syncMdScrollFromEditor?.();
     const tab = activeTabId ? tabs.get(activeTabId) : undefined;
-    if (!tab || tab.viewMode === "hex" || tab.dirty || !editor) {
+    if (!tab || tab.viewMode !== "text" || tab.dirty || !editor) {
       return;
     }
     const visible = editor.getLayoutInfo().height;

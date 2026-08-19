@@ -45,6 +45,8 @@ export function defineEditorThemes(monaco: typeof Monaco) {
       "editor.background": "#1e1e1e",
       "editor.foreground": "#d4d4d4",
       "editorGutter.background": "#1e1e1e",
+      "editorLineNumber.foreground": "#5a5a5a",
+      "editorLineNumber.activeForeground": "#7a7a7a",
     },
   });
 
@@ -74,6 +76,8 @@ export function defineEditorThemes(monaco: typeof Monaco) {
       "editor.background": "#ffffff",
       "editor.foreground": "#1e1e1e",
       "editorGutter.background": "#ffffff",
+      "editorLineNumber.foreground": "#c2c2c2",
+      "editorLineNumber.activeForeground": "#9a9a9a",
     },
   });
 }

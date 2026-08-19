@@ -69,3 +69,106 @@ pub fn delete_fs_entry(path: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+fn markdown_asset_dir(markdown_path: &Path) -> Result<PathBuf, String> {
+    let parent = markdown_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| "invalid markdown path".to_string())?;
+    let stem = markdown_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("images")
+        .trim();
+    let folder = if stem.is_empty() { "images" } else { stem };
+    Ok(parent.join(folder))
+}
+
+fn relative_markdown_path(markdown_path: &Path, dest: &Path) -> Result<String, String> {
+    let parent = markdown_path
+        .parent()
+        .ok_or_else(|| "invalid markdown path".to_string())?;
+    let rel = dest
+        .strip_prefix(parent)
+        .map_err(|_| "image is not beside the markdown file".to_string())?;
+    Ok(format!("./{}", rel.to_string_lossy().replace('\\', "/")))
+}
+
+fn unique_file(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let mut path = dir.join(format!("{stem}.{ext}"));
+    if !path.exists() {
+        return path;
+    }
+    if let Ok(mut n) = stem.parse::<u128>() {
+        loop {
+            n += 1;
+            path = dir.join(format!("{n}.{ext}"));
+            if !path.exists() {
+                return path;
+            }
+        }
+    }
+    let mut i = 1u32;
+    loop {
+        path = dir.join(format!("{stem}-{i}.{ext}"));
+        if !path.exists() {
+            return path;
+        }
+        i += 1;
+    }
+}
+
+fn sanitize_stem(name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return "image".into();
+    }
+    trimmed.to_string()
+}
+
+pub struct SavedMarkdownImage {
+    pub relative_path: String,
+    pub absolute_path: String,
+}
+
+pub fn save_markdown_image_bytes(
+    markdown_path: String,
+    data: Vec<u8>,
+    ext: &str,
+    stem: &str,
+) -> Result<SavedMarkdownImage, String> {
+    let md = Path::new(&markdown_path);
+    if !md.is_file() {
+        return Err("markdown file is not saved".into());
+    }
+    let dir = markdown_asset_dir(md)?;
+    fs::create_dir_all(&dir).map_err(|e| format!("io: {e}"))?;
+    let dest = unique_file(&dir, stem, ext);
+    fs::write(&dest, data).map_err(|e| format!("io: {e}"))?;
+    Ok(SavedMarkdownImage {
+        relative_path: relative_markdown_path(md, &dest)?,
+        absolute_path: dest.to_string_lossy().into_owned(),
+    })
+}
+
+pub fn import_markdown_image(
+    markdown_path: String,
+    source_path: String,
+) -> Result<SavedMarkdownImage, String> {
+    let src = Path::new(&source_path);
+    if !src.is_file() {
+        return Err("source image not found".into());
+    }
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
+    let stem = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(sanitize_stem)
+        .unwrap_or_else(|| "image".into());
+    let bytes = fs::read(src).map_err(|e| format!("io: {e}"))?;
+    save_markdown_image_bytes(markdown_path, bytes, &ext, &stem)
+}

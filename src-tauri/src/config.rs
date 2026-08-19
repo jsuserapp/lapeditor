@@ -115,6 +115,10 @@ pub struct Settings {
     pub font_size: f64,
     #[serde(default)]
     pub search_exclude: SearchExcludeSettings,
+    #[serde(default)]
+    pub word_wrap: bool,
+    #[serde(default = "default_recycle_bin_size")]
+    pub recycle_bin_size: u32,
 }
 
 fn default_zoom() -> f64 {
@@ -149,6 +153,10 @@ fn default_font_size() -> f64 {
     14.0
 }
 
+fn default_recycle_bin_size() -> u32 {
+    10
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -162,6 +170,8 @@ impl Default for Settings {
             font_family: default_font_family(),
             font_size: default_font_size(),
             search_exclude: SearchExcludeSettings::default(),
+            word_wrap: false,
+            recycle_bin_size: default_recycle_bin_size(),
         }
     }
 }
@@ -222,6 +232,9 @@ pub fn load_settings() -> Settings {
         settings.font_size = default_font_size();
     }
     settings.search_exclude = settings.search_exclude.normalized();
+    if settings.recycle_bin_size > 50 {
+        settings.recycle_bin_size = 50;
+    }
     settings
 }
 
@@ -235,6 +248,8 @@ pub fn update_settings(
     font_family: Option<String>,
     font_size: Option<f64>,
     search_exclude: Option<SearchExcludeSettings>,
+    word_wrap: Option<bool>,
+    recycle_bin_size: Option<u32>,
 ) -> Result<Settings, String> {
     let mut settings = load_settings();
     if let Some(locale) = locale {
@@ -282,6 +297,12 @@ pub fn update_settings(
     if let Some(search_exclude) = search_exclude {
         settings.search_exclude = search_exclude.normalized();
     }
+    if let Some(word_wrap) = word_wrap {
+        settings.word_wrap = word_wrap;
+    }
+    if let Some(recycle_bin_size) = recycle_bin_size {
+        settings.recycle_bin_size = recycle_bin_size.min(50);
+    }
     save_settings(&settings)?;
     Ok(settings)
 }
@@ -303,19 +324,30 @@ fn is_normal_size(width: u32, height: u32) -> bool {
     width >= 800 && height >= 500 && width <= 20_000 && height <= 20_000
 }
 
+fn decoration_delta(window: &WebviewWindow) -> (u32, u32) {
+    let Ok(outer) = window.outer_size() else {
+        return (0, 0);
+    };
+    let Ok(inner) = window.inner_size() else {
+        return (0, 0);
+    };
+    (
+        outer.width.saturating_sub(inner.width),
+        outer.height.saturating_sub(inner.height),
+    )
+}
+
 struct RestoredFrame {
     x: i32,
     y: i32,
     width: u32,
     height: u32,
-    maximized: bool,
 }
 
 #[cfg(windows)]
 fn restored_frame(window: &WebviewWindow) -> Option<RestoredFrame> {
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowPlacement, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED, SW_SHOWMAXIMIZED,
-        SW_SHOWMINIMIZED,
+        GetWindowPlacement, WINDOWPLACEMENT,
     };
 
     let hwnd = window.hwnd().ok()?;
@@ -330,33 +362,52 @@ fn restored_frame(window: &WebviewWindow) -> Option<RestoredFrame> {
         return None;
     }
 
-    let maximized = place.showCmd == SW_SHOWMAXIMIZED.0 as u32
-        || (place.showCmd == SW_SHOWMINIMIZED.0 as u32
-            && place.flags.contains(WPF_RESTORETOMAXIMIZED));
-
     Some(RestoredFrame {
         x: rect.left,
         y: rect.top,
         width: width as u32,
         height: height as u32,
-        maximized,
     })
 }
 
 #[cfg(not(windows))]
 fn restored_frame(window: &WebviewWindow) -> Option<RestoredFrame> {
-    if window.is_maximized().unwrap_or(false) || window.is_minimized().unwrap_or(false) {
-        return None;
-    }
     let position = window.outer_position().ok()?;
-    let size = window.outer_size().ok()?;
+    let size = window.inner_size().ok()?;
     Some(RestoredFrame {
         x: position.x,
         y: position.y,
         width: size.width,
         height: size.height,
-        maximized: false,
     })
+}
+
+fn save_normal_inner_frame(window: &WebviewWindow, state: &mut WindowState) {
+    let Ok(pos) = window.outer_position() else {
+        return;
+    };
+    let Ok(size) = window.inner_size() else {
+        return;
+    };
+    if is_normal_position(pos.x, pos.y) && is_normal_size(size.width, size.height) {
+        state.x = Some(pos.x);
+        state.y = Some(pos.y);
+        state.width = Some(size.width);
+        state.height = Some(size.height);
+    }
+}
+
+/// Convert Win32 outer restore-bounds into Tauri inner size.
+fn save_inner_frame_from_placement(window: &WebviewWindow, state: &mut WindowState, frame: &RestoredFrame) {
+    let (pad_w, pad_h) = decoration_delta(window);
+    let width = frame.width.saturating_sub(pad_w);
+    let height = frame.height.saturating_sub(pad_h);
+    if is_normal_position(frame.x, frame.y) && is_normal_size(width, height) {
+        state.x = Some(frame.x);
+        state.y = Some(frame.y);
+        state.width = Some(width);
+        state.height = Some(height);
+    }
 }
 
 pub fn save_window_state(app: &AppHandle) -> Result<(), String> {
@@ -365,16 +416,23 @@ pub fn save_window_state(app: &AppHandle) -> Result<(), String> {
     };
 
     let mut state = load_window_state();
-    if let Some(frame) = restored_frame(&window) {
-        if is_normal_position(frame.x, frame.y) && is_normal_size(frame.width, frame.height) {
-            state.x = Some(frame.x);
-            state.y = Some(frame.y);
-            state.width = Some(frame.width);
-            state.height = Some(frame.height);
+    let minimized = window.is_minimized().unwrap_or(false);
+    let maximized = window.is_maximized().unwrap_or(false);
+
+    if !minimized {
+        state.maximized = maximized;
+    }
+
+    if !minimized && !maximized {
+        // Pair with restore: Tauri set_size() is inner size, set_position() is outer.
+        // Saving GetWindowPlacement (outer) and restoring via set_size made the
+        // window grow by the DWM shadow/resize frame on every launch.
+        save_normal_inner_frame(&window, &mut state);
+    } else if let Some(frame) = restored_frame(&window) {
+        let (pad_w, pad_h) = decoration_delta(&window);
+        if pad_w > 0 || pad_h > 0 {
+            save_inner_frame_from_placement(&window, &mut state, &frame);
         }
-        state.maximized = frame.maximized;
-    } else if !window.is_minimized().unwrap_or(false) {
-        state.maximized = window.is_maximized().unwrap_or(false);
     }
 
     write_json(&paths::window_state_path(), &state)
@@ -383,14 +441,14 @@ pub fn save_window_state(app: &AppHandle) -> Result<(), String> {
 pub fn restore_window_state(window: &WebviewWindow) {
     let state = load_window_state();
 
-    if let (Some(x), Some(y)) = (state.x, state.y) {
-        if is_normal_position(x, y) {
-            let _ = window.set_position(PhysicalPosition::new(x, y));
-        }
-    }
     if let (Some(width), Some(height)) = (state.width, state.height) {
         if is_normal_size(width, height) {
             let _ = window.set_size(PhysicalSize::new(width, height));
+        }
+    }
+    if let (Some(x), Some(y)) = (state.x, state.y) {
+        if is_normal_position(x, y) {
+            let _ = window.set_position(PhysicalPosition::new(x, y));
         }
     }
     if state.maximized {

@@ -19,7 +19,7 @@ const PREVIEW_MAX_CHARS: usize = 240;
 
 const BINARY_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "svgz", "exe", "dll", "so", "dylib",
-    "zip", "7z", "rar", "gz", "tgz", "tar", "xz", "bz2", "wasm", "pdf", "woff", "woff2", "ttf",
+    "zip", "7z", "rar", "gz", "tgz", "tar", "xz", "bz2", "wasm", "pdf", "epub", "woff", "woff2", "ttf",
     "otf", "eot", "mp3", "mp4", "avi", "mov", "mkv", "webm", "class", "o", "a", "lib", "obj",
     "pdb", "sqlite", "db", "bin", "dat", "pak", "dmg", "iso", "img", "apk", "ipa",
 ];
@@ -292,6 +292,9 @@ fn build_walker(root: &Path, excludes: &SearchExcludeSettings) -> Result<ignore:
         builder.ignore(excludes.use_ignore_file);
         let excludes = excludes.clone();
         builder.filter_entry(move |entry| {
+            if crate::paths::is_session_path(entry.path()) {
+                return false;
+            }
             !is_excluded_path(
                 entry.path(),
                 entry.file_type().map(|t| t.is_dir()).unwrap_or(false),
@@ -304,6 +307,7 @@ fn build_walker(root: &Path, excludes: &SearchExcludeSettings) -> Result<ignore:
         builder.git_global(false);
         builder.git_exclude(false);
         builder.ignore(false);
+        builder.filter_entry(|entry| !crate::paths::is_session_path(entry.path()));
     }
     Ok(builder.build())
 }

@@ -48,6 +48,7 @@ export class HexEditor {
   private nibble = 0;
   private selEnd = 0;
   private dragging = false;
+  private readOnly = false;
   private firstRow = 0;
   private visibleRows = 0;
   private undoStack: HexPatch[] = [];
@@ -105,6 +106,10 @@ export class HexEditor {
       this.selEnd = this.offset;
     }
     this.render(true);
+  }
+
+  setReadOnly(value: boolean) {
+    this.readOnly = value;
   }
 
   getHistory(): HexHistory {
@@ -396,6 +401,9 @@ export class HexEditor {
   }
 
   private applyHistory(direction: "undo" | "redo"): boolean {
+    if (this.readOnly) {
+      return false;
+    }
     const from = direction === "undo" ? this.undoStack : this.redoStack;
     const to = direction === "undo" ? this.redoStack : this.undoStack;
     const patch = from.pop();
@@ -427,7 +435,7 @@ export class HexEditor {
   }
 
   private writeNibble(nibbleValue: number) {
-    if (this.bytes.length === 0) {
+    if (this.readOnly || this.bytes.length === 0) {
       return;
     }
     const caretBefore = this.snapshotCaret();
@@ -450,6 +458,9 @@ export class HexEditor {
   }
 
   private writeUtf8Char(ch: string) {
+    if (this.readOnly) {
+      return;
+    }
     const encoded = new TextEncoder().encode(ch);
     if (!encoded.length) {
       return;

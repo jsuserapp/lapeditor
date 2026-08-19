@@ -46,10 +46,14 @@ function positionTip(el: HTMLElement) {
   const gap = 8;
   const tw = node.offsetWidth;
   const th = node.offsetHeight;
-  let left = rect.right + gap;
-  let top = rect.top + (rect.height - th) / 2;
+  const below = el.dataset.tooltipPlacement === "below";
+  let left = below ? rect.left + (rect.width - tw) / 2 : rect.right + gap;
+  let top = below ? rect.bottom + gap : rect.top + (rect.height - th) / 2;
   if (left + tw > window.innerWidth - 8) {
     left = Math.max(8, window.innerWidth - tw - 8);
+  }
+  if (left < 8) {
+    left = 8;
   }
   if (top < 8) {
     top = 8;
